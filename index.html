@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#108082">
+  <title>TaskMaster Pro</title>
+  <link rel="icon" href="https://www.petroindustech.com/images/petro-circle-logo.webp">
+  <link rel="manifest" href="manifest.json">
+  <link rel="apple-touch-icon" href="https://www.petroindustech.com/images/petro-circle-logo.webp">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="TaskMaster">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" rel="stylesheet">
+  <link href="assets/app.css?v=3.3.0" rel="stylesheet">
+  <script>
+    try { if (localStorage.getItem('tm_theme') === 'dark') document.documentElement.setAttribute('data-bs-theme', 'dark'); } catch (e) {}
+  </script>
+</head>
+<body>
+  <!-- Boot -->
+  <div id="boot" class="boot">
+    <div class="boot-inner"><div class="spinner-border text-brand"></div><div class="mt-3 fw-semibold">Loading TaskMaster…</div></div>
+  </div>
+
+  <!-- Login -->
+  <section id="login" class="login d-none">
+    <div class="login-art">
+      <div class="login-art-inner">
+        <img src="https://www.petroindustech.com/images/logo.webp" alt="Petro Industech" class="login-logo-wide">
+        <h1>Work, tracked<br>without the chaos.</h1>
+        <p>Delegation, KRAs, KPIs and help tickets — one place for the whole team.</p>
+        <ul class="login-points">
+          <li><i class="fas fa-comments"></i> Full task history, like a chat</li>
+          <li><i class="fas fa-chart-line"></i> Live KPI scorecards</li>
+          <li><i class="fas fa-bolt"></i> Fast — data is cached on your device</li>
+        </ul>
+      </div>
+    </div>
+    <div class="login-panel">
+      <form id="loginForm" class="login-card" autocomplete="on">
+        <img src="https://www.petroindustech.com/images/petro-circle-logo.webp" alt="" class="login-logo">
+        <h2>Welcome back</h2>
+        <p class="text-muted mb-4">Sign in to TaskMaster Pro</p>
+        <label class="form-label" for="loginEmail">Email</label>
+        <input type="email" class="form-control form-control-lg mb-3" id="loginEmail" placeholder="name@petroindustech.com" required autocomplete="username">
+        <label class="form-label" for="loginPass">Password</label>
+        <div class="input-group input-group-lg mb-4">
+          <input type="password" class="form-control" id="loginPass" placeholder="••••••••" required autocomplete="current-password">
+          <button type="button" class="btn btn-outline-secondary" id="togglePass" aria-label="Show password"><i class="fas fa-eye"></i></button>
+        </div>
+        <button type="submit" class="btn btn-brand btn-lg w-100" id="loginBtn">Sign in</button>
+        <div id="loginError" class="text-danger small fw-semibold mt-3" role="alert"></div>
+        <div id="configWarn" class="alert alert-warning small mt-3 d-none">API URL is not set. Open <b>config.js</b> and paste your Apps Script Web App URL.</div>
+      </form>
+    </div>
+  </section>
+
+  <!-- App shell -->
+  <div id="shell" class="shell d-none">
+    <aside id="sidebar" class="sidebar" aria-label="Main navigation">
+      <div class="sidebar-brand">
+        <img class="brand-logo" src="https://www.petroindustech.com/images/logo.webp" alt="Petro Industech"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+        <div class="brand-fallback"><img src="https://www.petroindustech.com/images/petro-circle-logo.webp" alt=""><div><div class="brand-name">TaskMaster</div><div class="brand-sub">Petro Industech</div></div></div>
+        <div class="brand-app"><b>TaskMaster</b> · Work tracker</div>
+      </div>
+      <nav id="nav" class="nav-list"></nav>
+      <div class="sidebar-foot" id="sidebarUser"></div>
+    </aside>
+    <div class="sidebar-backdrop" data-act="closeSidebar"></div>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn d-lg-none" data-act="openSidebar" aria-label="Open menu"><i class="fas fa-bars"></i></button>
+        <div class="topbar-title">
+          <h1 id="pageTitle">Home</h1>
+          <div id="pageSub" class="page-sub"></div>
+        </div>
+        <div class="topbar-actions">
+          <button id="syncPill" class="sync-pill" data-act="refresh" title="Refresh data from Google Sheet">
+            <i class="fas fa-rotate"></i><span id="syncText">Synced</span>
+          </button>
+          <button class="icon-btn" data-act="toggleTheme" aria-label="Toggle dark mode"><i class="fas fa-moon" id="themeIcon"></i></button>
+          <div class="dropdown">
+            <button class="avatar-btn" data-bs-toggle="dropdown" aria-label="Account" id="topAvatar"></button>
+            <ul class="dropdown-menu dropdown-menu-end shadow">
+              <li><div class="dropdown-header" id="menuUser"></div></li>
+              <li><button class="dropdown-item" data-act="refresh"><i class="fas fa-rotate me-2"></i>Refresh data</button></li>
+              <li><hr class="dropdown-divider"></li>
+              <li><button class="dropdown-item text-danger" data-act="logout"><i class="fas fa-right-from-bracket me-2"></i>Sign out</button></li>
+            </ul>
+          </div>
+        </div>
+      </header>
+      <div id="view" class="view"></div>
+    </main>
+
+    <nav id="bottomNav" class="bottom-nav" aria-label="Quick navigation"></nav>
+  </div>
+
+  <!-- Task detail drawer (WhatsApp style history) -->
+  <div class="offcanvas offcanvas-end task-drawer" tabindex="-1" id="taskDrawer" aria-labelledby="drawerTitle">
+    <div class="offcanvas-header">
+      <div class="flex-grow-1 min-w-0" id="drawerHead"></div>
+      <button type="button" class="btn-close" data-bs-dismiss="offcanvas" aria-label="Close"></button>
+    </div>
+    <div class="drawer-info" id="drawerMeta"></div>
+    <div class="offcanvas-body chat-body" id="drawerBody"></div>
+    <div class="drawer-foot" id="drawerFoot"></div>
+  </div>
+
+  <!-- Generic dialog -->
+  <div class="modal fade" id="dlg" tabindex="-1" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable" id="dlgDialog">
+      <form class="modal-content" id="dlgForm" novalidate>
+        <div class="modal-header"><h5 class="modal-title" id="dlgTitle"></h5><button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>
+        <div class="modal-body" id="dlgBody"></div>
+        <div class="modal-footer" id="dlgFoot">
+          <div class="dlg-error text-danger small fw-semibold me-auto" id="dlgError"></div>
+          <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+          <button type="submit" class="btn btn-brand" id="dlgSubmit">Save</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.js"></script>
+  <script src="config.js?v=3.3.0"></script>
+  <script src="assets/core.js?v=3.3.0"></script>
+  <script src="assets/data.js?v=3.3.0"></script>
+  <script src="assets/drawer.js?v=3.3.0"></script>
+  <script src="assets/views-me.js?v=3.3.0"></script>
+  <script src="assets/views-team.js?v=3.3.0"></script>
+  <script src="assets/views-eval.js?v=3.3.0"></script>
+  <script src="assets/views-report.js?v=3.3.0"></script>
+  <script src="assets/views-admin.js?v=3.3.0"></script>
+  <script src="assets/app.js?v=3.3.0"></script>
+</body>
+</html>

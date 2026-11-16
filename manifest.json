@@ -1,0 +1,13 @@
+{
+  "name": "TaskMaster Pro – Petro Industech",
+  "short_name": "TaskMaster",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f4f6f8",
+  "theme_color": "#108082",
+  "icons": [
+    { "src": "https://www.petroindustech.com/images/petro-circle-logo.webp", "sizes": "192x192", "type": "image/webp", "purpose": "any" },
+    { "src": "https://www.petroindustech.com/images/petro-circle-logo.webp", "sizes": "512x512", "type": "image/webp", "purpose": "any" }
+  ]
+}
