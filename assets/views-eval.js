@@ -23,17 +23,17 @@ function kpiBoard(email, month, { editable, route }) {
   const scored = manual.filter(k => manualScoreRow(k, email, month)).length;
   const canFake = editable && (isAdmin() || S.idx.team.has(ek(email)));
 
-  const summary = `<div class="cardx mb-3"><div class="cardx-body d-flex flex-wrap gap-4 align-items-center">
-    <div class="d-flex align-items-center gap-3">${avatar(email, "lg")}<div><div class="fw-bold">${h(nameOf(email))}</div><div class="small text-muted">${h(monthLabel(month))}</div></div></div>
-    <div><div class="small text-muted fw-semibold">${md ? "Final (MD override)" : "System score"}</div><div class="score-big ${scoreCls(final)}">${final.toFixed(2)}%</div>${md ? `<div class="small text-muted">System: ${sys.toFixed(2)}%${md[5] ? ` · ${h(md[5])}` : ""}</div>` : ""}</div>
-    <div class="flex-grow-1" style="min-width:220px">
-      <div class="d-flex justify-content-between small fw-semibold"><span style="color:var(--manual)"><i class="fas fa-pen-to-square me-1"></i>Manual ${mEarned.toFixed(2)} / ${sum(manual, w)}</span><span>${scored}/${manual.length} scored</span></div>
-      <div class="bar manual"><span style="width:${Math.min(100, sum(manual, w) ? mEarned / sum(manual, w) * 100 : 0)}%"></span></div>
-      <div class="d-flex justify-content-between small fw-semibold mt-2"><span style="color:var(--auto)"><i class="fas fa-gears me-1"></i>Automated ${aEarned.toFixed(2)} / ${sum(auto, w)}</span><span>${auto.length} KPI</span></div>
-      <div class="bar auto"><span style="width:${Math.min(100, sum(auto, w) ? aEarned / sum(auto, w) * 100 : 0)}%"></span></div>
-    </div>
-    ${Math.abs(totalW - 100) > 0.01 ? `<div class="chip chip-amber"><i class="fas fa-triangle-exclamation"></i>Total weightage is ${totalW}% (not 100%)</div>` : ""}
-  </div></div>`;
+  const eq = (cls, icon, label, val, max, line) => `<div class="kq-box ${cls}"><div class="kq-l"><i class="fas fa-${icon} me-1"></i>${label}</div><div class="kq-v">${val}${max != null ? `<small> / ${max}</small>` : ""}</div><div class="kq-s">${line}</div></div>`;
+  const summary = `<div class="cardx mb-3"><div class="cardx-head"><h3><i class="fas fa-chart-simple text-brand me-2"></i>KPI score breakdown · ${h(monthLabel(month))}</h3>
+      ${Math.abs(totalW - 100) > 0.01 ? `<span class="chip chip-amber ms-auto"><i class="fas fa-triangle-exclamation"></i>Total weightage is ${totalW} (not 100)</span>` : ""}</div>
+    <div class="cardx-body"><div class="kq">
+      ${eq("auto", "gears", "Automated KPIs", aEarned.toFixed(2), sum(auto, w), `${auto.length} KPI · from KRA tasks`)}
+      <div class="kq-op">+</div>
+      ${eq("manual", "pen-to-square", "Manual KPIs", mEarned.toFixed(2), sum(manual, w), `${scored}/${manual.length} scored by HOD / HR`)}
+      <div class="kq-op">=</div>
+      ${eq("sys", "chart-simple", "KPI score (system)", sys.toFixed(2) + "%", null, "Auto + Manual")}
+      ${md ? `<div class="kq-op"><i class="fas fa-arrow-right"></i></div>${eq("md", "crown", "KPI score (MD final)", (parseFloat(md[4]) || 0).toFixed(2) + "%", null, md[5] ? h(md[5]) : "MD override replaces system score")}` : ""}
+    </div></div></div>`;
 
   const manualCards = manual.map(k => {
     const row = manualScoreRow(k, email, month), max = w(k), id = h(k[0]);
@@ -117,7 +117,7 @@ VIEWS.evaluation = {
       <div class="legend pb-2"><span class="chip chip-manual">Manual</span><span class="chip chip-auto">Automated</span></div></div>`;
     if (!u.emp) return controls + empty("No team members", "users-slash");
     const [rf, rt] = monthRange(u.month);
-    return controls + scoreTiles(workStats(u.emp, rf, rt < S.data.today ? rt : S.data.today), "Work score · " + monthLabel(u.month)) +
+    return controls + scoreChain(fullScore(u.emp, rf, rt < S.data.today ? rt : S.data.today), { title: nameOf(u.emp) + " · " + monthLabel(u.month), sub: "Delegation → KRA → Tickets → Completion & On-time → KPI → Final" }) +
       kpiBoard(u.emp, u.month, { editable: true, route: "evaluation" }) + evalTasksPanel(u.emp, u.month);
   }
 };
@@ -157,7 +157,7 @@ VIEWS.kpi = {
       <select class="form-select w-auto" data-change="ui" data-k="kpi.emp"><option value="all">All team members</option>${teamUsers().map(x => `<option value="${h(ek(x.email))}" ${ek(x.email) === u.emp ? "selected" : ""}>${h(x.name)}</option>`).join("")}</select>
       <input type="search" class="form-control" style="max-width:200px" placeholder="Search…" value="${h(u.q || "")}" data-input="uisearch" data-k="kpi.q">
       <div class="grow"></div>
-      <div class="legend"><span class="chip chip-manual">Manual</span><span class="chip chip-auto">Automated</span><span><span class="dot g"></span> ≥80%</span><span><span class="dot y"></span> 50–80%</span><span><span class="dot r"></span> &lt;50%</span></div></div>`;
+      <div class="legend"><span class="chip chip-manual">Manual</span><span class="chip chip-auto">Automated</span><span>KPI = Auto + Manual · Final = avg(Delegation, KRA, Tickets, KPI)</span><span><span class="dot g"></span> ≥80%</span><span><span class="dot y"></span> 50–80%</span><span><span class="dot r"></span> &lt;50%</span></div></div>`;
     if (!teamUsers().length) return controls + empty("No team assigned to you", "users-slash");
     if (u.view === "fy") {
       const [sy, ey] = u.fy.split("-"); const months = [];
@@ -175,7 +175,10 @@ VIEWS.kpi = {
         return `<div class="kchip ${t}"><span class="kn">${scoreDot(e, mx)}${t === "manual" ? '<i class="fas fa-pen-to-square"></i>' : t === "auto" ? '<i class="fas fa-gears"></i>' : ""}${h(k[3])}</span><span><span class="kv">${e.toFixed(2)}</span> <span class="text-muted">/ ${mx}</span>${t === "manual" && !manualScoreRow(k, email, u.month) ? ' <span class="text-danger fw-semibold">· not scored</span>' : ""}</span></div>`; }).join("");
       return `<div class="cardx"><div class="cardx-body d-flex flex-column flex-lg-row gap-3">
         <div style="min-width:220px">${person(email, "")}<div class="small text-muted mt-1">${h(x.dept || "")}</div>
-          <div class="mt-2"><span class="score-big ${scoreCls(final)}" style="font-size:2rem">${final.toFixed(2)}%</span><div class="small text-muted">${md ? `MD override · system ${sys.toFixed(2)}%` : "System score"}</div></div>
+          ${(() => { const kb = kpiBreakdown(email, u.month), fs = fullScore(email, ...periodOfMonth(u.month));
+            return `<div class="mt-2 d-flex gap-3 align-items-end"><div><div class="small-2 text-muted fw-bold text-uppercase">KPI score</div><span class="score-big ${scoreCls(final)}" style="font-size:1.8rem">${final.toFixed(2)}%</span></div>
+              <div><div class="small-2 text-muted fw-bold text-uppercase">Final score</div><span class="fw-bold fs-5 ${pctCls(fs.final)}">${pctTxt(fs.final)}</span></div></div>
+              <div class="small text-muted">${md ? `MD final · system ${sys.toFixed(2)}%` : `<span style="color:var(--auto)">Auto ${kb.auto.toFixed(2)}</span> + <span style="color:var(--manual)">Manual ${kb.manual.toFixed(2)}</span>`}</div>`; })()}
           <div class="d-flex gap-2 mt-2 flex-wrap"><a class="btn btn-soft btn-sm" href="#/evaluation?emp=${encodeURIComponent(email)}&month=${u.month}"><i class="fas fa-scale-balanced me-1"></i>Evaluate</a>${isAdmin() ? `<button class="btn btn-ghost btn-sm" data-act="mdScore" data-email="${h(email)}" data-month="${h(u.month)}" data-sys="${sys.toFixed(2)}"><i class="fas fa-crown me-1 text-warning"></i>MD score</button>` : ""}</div></div>
         <div class="d-flex flex-wrap gap-2 align-content-start flex-grow-1">${chips || '<span class="text-muted small">No KPIs mapped.</span>'}</div>
       </div></div>`;

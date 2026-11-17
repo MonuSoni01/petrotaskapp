@@ -65,12 +65,18 @@ function renderView() {
   renderNav();
   S.pendingRender = false;
 }
-// Re-render current screen; postpone while the user is typing in it.
+// Re-render current screen; postpone only while the user is actively typing in a text box.
+let lastKeyAt = 0;
+document.addEventListener("keydown", () => { lastKeyAt = Date.now(); }, true);
 function rerender(force) {
   if (!S.data) return;
   const a = document.activeElement;
-  const typing = a && $("#view").contains(a) && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && a.type !== "checkbox" && a.dataset.input !== "uisearch";
-  if (!force && typing) { S.pendingRender = true; renderNav(); return; }
+  const textBox = a && $("#view").contains(a) && (a.tagName === "TEXTAREA" || (a.tagName === "INPUT" && /^(text|search|number|email|tel|url)$/.test(a.type))) && a.dataset.input !== "uisearch";
+  if (!force && textBox && Date.now() - lastKeyAt < 4000) {
+    S.pendingRender = true; renderNav();
+    clearTimeout(rerender._t); rerender._t = setTimeout(() => rerender(), 4200);
+    return;
+  }
   renderView();
 }
 document.addEventListener("focusout", () => setTimeout(() => {
@@ -106,11 +112,13 @@ function applyData(data) {
   if (drawerTaskId) renderDrawer(false);
 }
 function setSyncPill() {
-  const pill = $("#syncPill"), t = $("#syncText");
+  const pill = $("#syncPill"), t = $("#syncText"), bar = $("#syncBar");
   if (!pill) return;
+  if (bar) { if (S.syncing) { bar.className = ""; void bar.offsetWidth; bar.className = "on"; } else if (bar.className === "on") bar.className = "done"; }
   pill.classList.toggle("busy", S.syncing);
   if (S.syncing) { t.textContent = "Syncing…"; pill.classList.remove("stale"); return; }
   if (!S.lastSync) { t.textContent = "Refresh"; return; }
+  if (IDLE.sleeping) { t.textContent = "Paused · tap to update"; pill.classList.add("stale"); return; }
   const mins = Math.floor((Date.now() - S.lastSync) / 60000);
   t.textContent = mins < 1 ? "Synced just now" : mins < 60 ? `Synced ${mins} min ago` : `Synced ${Math.floor(mins / 60)} h ago`;
   pill.classList.toggle("stale", mins >= (CFG.STALE_AFTER_MINUTES || 240));
@@ -120,7 +128,9 @@ setInterval(setSyncPill, 30000);
 
 // ---------- session ----------
 function saveSession() { try { localStorage.setItem("tm_session", JSON.stringify({ token: S.token, user: S.user })); } catch (e) {} }
-function showShell() { $("#boot").classList.add("d-none"); $("#login").classList.add("d-none"); $("#shell").classList.remove("d-none"); }
+function setTopbarH() { const t = $(".topbar"); if (t && t.offsetHeight) document.documentElement.style.setProperty("--topbar-h", t.offsetHeight + "px"); }
+window.addEventListener("resize", debounce(setTopbarH, 150));
+function showShell() { setTimeout(setTopbarH, 0); $("#boot").classList.add("d-none"); $("#login").classList.add("d-none"); $("#shell").classList.remove("d-none"); }
 function showLogin(msg) {
   $("#boot").classList.add("d-none"); $("#shell").classList.add("d-none"); $("#login").classList.remove("d-none");
   $("#loginError").textContent = msg || "";
@@ -184,10 +194,36 @@ ACT.toggleTheme = () => {
   const cached = await Cache.get("data:" + ek(sess.user.email));
   if (cached && cached.data) {
     S.lastSync = cached.at;
-    applyData(cached.data); // instant: show cached data, no server call
+    applyData(cached.data); // instant: show saved data first…
     setSyncPill();
+    sync(true);             // …then fetch the latest in the background
   } else {
     await sync(true);
     if (!S.data && S.token) showLogin("Could not load data. Please sign in again.");
   }
 })();
+
+// ---------- auto refresh: sleep after 5 min idle, sync on wake / tab return ----------
+var IDLE = { ms: 5 * 60 * 1000, last: Date.now(), sleeping: false };
+function wake(reason) {
+  const wasAsleep = IDLE.sleeping || Date.now() - IDLE.last > IDLE.ms;
+  IDLE.last = Date.now(); IDLE.sleeping = false;
+  if (wasAsleep && S.data && S.token && document.visibilityState === "visible") sync(true);
+  setSyncPill();
+}
+let wakeT = 0;
+["pointerdown", "keydown", "touchstart", "wheel", "mousemove"].forEach(ev => document.addEventListener(ev, () => {
+  if (!IDLE.sleeping && Date.now() - wakeT < 1500) return; wakeT = Date.now(); wake(ev);
+}, { passive: true, capture: true }));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") return;
+  IDLE.last = Date.now(); IDLE.sleeping = false;
+  if (S.data && S.token && Date.now() - S.lastSync > 60 * 1000) sync(true); // came back to the tab
+  setSyncPill();
+});
+window.addEventListener("online", () => { if (S.data && S.token) sync(true); });
+setInterval(() => {
+  if (!S.data || !S.token) return;
+  if (document.visibilityState !== "visible" || Date.now() - IDLE.last > IDLE.ms) { if (!IDLE.sleeping) { IDLE.sleeping = true; setSyncPill(); } return; }
+  if (Date.now() - S.lastSync > 5 * 60 * 1000) sync(true); // active tab: keep fresh every 5 min
+}, 30000);

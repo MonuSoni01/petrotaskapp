@@ -75,15 +75,14 @@ VIEWS.home = {
         <div class="ring"><svg width="72" height="72"><circle cx="36" cy="36" r="30" stroke="rgba(255,255,255,.25)" stroke-width="7" fill="none"/><circle cx="36" cy="36" r="30" stroke="#fff" stroke-width="7" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C - pct / 100 * C}"/></svg><div class="ring-t">${pct}%</div></div></div>
     </div>
     ${coverBanner()}
-    <div class="row g-3 mb-3">
-      <div class="col-lg-5">${homeScoreCard()}</div>
-      <div class="col-lg-7"><div class="tiles tiles-2 h-100">
+    ${homeScoreCard()}
+    <div class="list-sep">My work</div>
+    <div class="mb-3"><div class="tiles tiles-4">
         ${statCard("list-check", "amber", c.pending.length, "My open tasks", c.overdue.length ? `<span class="text-danger">${c.overdue.length} overdue</span>` : '<span class="text-muted">none overdue</span>', "#/tasks")}
         ${statCard("bullseye", "red", c.kra.length, "KRA pending", c.kra.length ? '<span class="text-muted">tap to finish</span>' : '<span class="text-success">all done</span>', "#/kra")}
         ${statCard("headset", "orange", c.tickets.length, "Tickets to resolve", "", "#/tickets")}
         ${statCard("hourglass-half", "violet", c.awaiting.length, "Waiting for approval", "", "#/tasks?tab=awaiting")}
       </div></div>
-    </div>
     ${canManage() ? (() => {
       const [mf] = monthRange(S.data.today.slice(0, 7)); let td = 0, tt = 0;
       teamUsers().forEach(x => { const w = workStats(ek(x.email), mf, S.data.today).all; td += w.done; tt += w.total; });
@@ -294,7 +293,7 @@ VIEWS.scorecard = {
     const u = ui("scorecard"); u.month = u.month || S.data.today.slice(0, 7);
     const [f, t] = monthRange(u.month);
     return `<div class="toolbar"><div><label class="form-label">Month</label><input type="month" class="form-control" value="${h(u.month)}" data-change="ui" data-k="scorecard.month"></div></div>
-      ${scoreTiles(workStats(me(), f, t < S.data.today ? t : S.data.today), "Work score · " + monthLabel(u.month))}
+      ${scoreChain(fullScore(me(), f, t < S.data.today ? t : S.data.today), { title: "My score · " + monthLabel(u.month), sub: "Delegation → KRA → Tickets → Completion & On-time → KPI → Final" })}
       ${kpiBoard(me(), u.month, { editable: false, route: "scorecard" })}`;
   }
 };
@@ -308,14 +307,8 @@ function coverBanner() {
 }
 
 function homeScoreCard() {
-  const [f] = monthRange(S.data.today.slice(0, 7));
-  const st = workStats(me(), f, S.data.today).all;
-  const ring = (v, color, label, sub) => { const C = 2 * Math.PI * 34, p = v == null ? 0 : Math.max(0, Math.min(100, v));
-    return `<div class="hs-item"><div class="ring lg"><svg width="84" height="84"><circle cx="42" cy="42" r="34" stroke="var(--slate-50)" stroke-width="8" fill="none"/><circle cx="42" cy="42" r="34" stroke="${color}" stroke-width="8" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C - p / 100 * C}"/></svg><div class="ring-t" style="color:var(--text)">${v == null ? "—" : Math.round(v) + "%"}</div></div>
-      <div><div class="fw-bold">${label}</div><div class="small text-muted">${sub}</div></div></div>`; };
-  return `<a class="home-score cardx" href="#/scorecard">
-    <div class="d-flex justify-content-between align-items-center mb-2"><div class="fw-bold"><i class="fas fa-gauge-high text-brand me-2"></i>My score · ${h(monthLabel(S.data.today.slice(0, 7)))}</div><span class="small text-brand fw-semibold">Details <i class="fas fa-chevron-right"></i></span></div>
-    ${st.total ? `<div class="hs-row">${ring(st.completion, "var(--brand)", "Completion", `${st.done} of ${st.total} done`)}${ring(st.ontime, "var(--green)", "On-time", `${st.late} late · ${st.fake} fake`)}</div>`
-      : `<div class="text-muted small py-3 text-center"><i class="fas fa-mug-hot me-1"></i>No work due for you yet this month.</div>`}
-  </a>`;
+  const m = S.data.today.slice(0, 7), [f, t] = periodOfMonth(m);
+  const sc = fullScore(me(), f, t);
+  return `<div class="cardx mb-3"><div class="cardx-head"><h3><i class="fas fa-gauge-high text-brand me-2"></i>My score · ${h(monthLabel(m))}</h3><a class="ms-auto small fw-semibold" href="#/scorecard">Full scorecard <i class="fas fa-chevron-right"></i></a></div>
+    <div class="cardx-body">${sc.st.all.total || sc.kpi != null ? scoreChain(sc, { compact: true }) : `<div class="text-muted small py-2 text-center"><i class="fas fa-mug-hot me-1"></i>No work due for you yet this month.</div>`}</div></div>`;
 }

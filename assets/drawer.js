@@ -1,6 +1,38 @@
 /* ============ task drawer: details + chat history + actions ============ */
 let drawer = null, drawerTaskId = "";
 
+// Fast refresh of a single task + its chat (used after sending and every 15 s while open).
+let threadBusy = false;
+async function refreshThread(id, force) {
+  if (threadBusy && !force) return;
+  threadBusy = true;
+  try {
+    const r = await api("taskActivity", { id }, { timeout: 30000 });
+    const key = String(id);
+    const before = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (S.idx.taskById.get(key) || [])[6];
+    S.data.activity = S.data.activity.filter(a => String(a[1]) !== key).concat(r.activity || []);
+    if (r.task) { const i = S.data.tasks.findIndex(t => String(t[0]) === key); if (i >= 0) S.data.tasks[i] = r.task; }
+    S.idx = buildIndex(S.data);
+    const after = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (S.idx.taskById.get(key) || [])[6];
+    if (before !== after) {
+      if (drawerTaskId === key) {
+        const b = $("#drawerBody"), nearBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 120;
+        if (before.split("|")[1] === after.split("|")[1]) { // only new messages: keep the composer as it is
+          b.innerHTML = chatHtml(S.idx.taskById.get(key));
+          if (nearBottom) b.scrollTop = b.scrollHeight;
+        } else {
+          const typing = $("#chatText") ? $("#chatText").value : "";
+          renderDrawer(nearBottom);
+          if ($("#chatText") && typing) $("#chatText").value = typing;
+        }
+      }
+      rerender();
+    }
+  } catch (e) { /* silent: next poll will retry */ }
+  finally { threadBusy = false; }
+}
+setInterval(() => { if (drawerTaskId && document.visibilityState === "visible") refreshThread(drawerTaskId); }, 15000);
+
 function openTask(id) {
   const t = S.idx.taskById.get(String(id));
   if (!t) return toast("Task not found. Refresh the data.", "warn");
@@ -8,6 +40,7 @@ function openTask(id) {
   drawer = drawer || new bootstrap.Offcanvas($("#taskDrawer"));
   renderDrawer(true);
   drawer.show();
+  refreshThread(drawerTaskId); // pull the latest messages in the background
 }
 ACT.openTask = el => openTask(el.dataset.id);
 $("#taskDrawer").addEventListener("hidden.bs.offcanvas", () => { drawerTaskId = ""; });
@@ -157,10 +190,12 @@ document.addEventListener("submit", async e => {
   try {
     const file = await readFile(input);
     patchTask(id, {}, { type: "comment", message: text, attachment: file ? "#uploading" : "" });
+    $("#chatText").value = ""; $("#chatText").style.height = "auto"; ACT.clearChatFile();
     renderDrawer(true);
+    btn.disabled = false; $("#chatText").focus();
     await api("addComment", { id, message: text, file });
-    afterAction("");
-  } catch (err) { toast(err.message, "err"); sync(true); }
+    await refreshThread(id, true); // only this chat — no full reload
+  } catch (err) { toast(err.message, "err"); refreshThread(id, true); }
   finally { btn.disabled = false; }
 });
 

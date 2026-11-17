@@ -85,7 +85,7 @@ VIEWS.delegate = {
         <div class="col-lg-3"><div class="cardx people-panel"><div class="cardx-head"><h3><i class="fas fa-users text-brand me-2"></i>People</h3>${u.person ? `<button class="btn btn-ghost btn-xs ms-auto" data-act="pickPerson" data-e="">Show all</button>` : ""}</div>
           <div class="pp-list">${plist.map(([e, x]) => `<button type="button" class="pp-item ${u.person === e ? "on" : ""}" data-act="pickPerson" data-e="${h(e)}">${avatar(e, "sm")}<span class="min-w-0 flex-grow-1 text-start"><span class="d-block fw-semibold text-truncate">${h(nameOf(e))}</span><span class="small-2 text-muted">${x.open} open · ${x.wait} review · ${x.done} done</span></span>${x.over ? `<span class="nav-badge">${x.over}</span>` : ""}</button>`).join("") || `<div class="p-3 small text-muted">No delegated tasks yet.</div>`}</div></div></div>
         <div class="col-lg-9">
-          <div class="toolbar">
+          <div class="toolbar sticky-inner">
             ${fchips("delegate.f", u.f, [{ v: "open", l: "Open", c: F.open.length }, { v: "overdue", l: "Overdue", c: F.overdue.length }, { v: "awaiting", l: "Awaiting", c: F.awaiting.length }, { v: "reopened", l: "Reopened", c: F.reopened.length }, { v: "done", l: "Completed", c: F.done.length }, { v: "all", l: "All", c: base.length }])}
             <div class="grow"></div>
             <select class="form-select w-auto" data-change="ui" data-k="delegate.sort"><option value="new" ${u.sort === "new" ? "selected" : ""}>Latest assigned</option><option value="old" ${u.sort === "old" ? "selected" : ""}>Oldest first</option><option value="due" ${u.sort === "due" ? "selected" : ""}>Deadline first</option><option value="closed" ${u.sort === "closed" ? "selected" : ""}>Recently closed</option></select>
@@ -201,32 +201,49 @@ function perfFor(email, inRange) {
   let n = 0, sum = 0; if (tasks.length) { n++; sum += tS; } if (kras.length) { n++; sum += kS; } if (tickets.length) { n++; sum += cS; }
   return { score: n ? Math.round(sum / n) : 0, task: { done: tD, total: tasks.length, score: tS, late: tL, fake: tF }, kra: { done: kD, total: kras.length, score: kS, late: kL, fake: kF }, tck: { done: cD, total: tickets.length, score: cS } };
 }
+// period helpers shared by Performance (Month / Dates / All time)
+function periodState(u) {
+  u.mode = u.mode || "month"; u.month = u.month || S.data.today.slice(0, 7);
+  if (u.mode === "all") return { from: "", to: S.data.today, label: "All time (till " + fmtD(S.data.today) + ")" };
+  if (u.mode === "custom") return { from: u.from || "", to: u.to || S.data.today, label: (u.from ? fmtD(u.from) : "Start") + " – " + fmtD(u.to || S.data.today) };
+  const [f, t] = periodOfMonth(u.month); return { from: f, to: t, label: monthLabel(u.month) };
+}
+function periodControls(route, u) {
+  return `${seg(route + ".mode", u.mode, [{ v: "month", l: "Month" }, { v: "custom", l: "Dates" }, { v: "all", l: "All time" }])}
+    ${u.mode === "month" ? `<input type="month" class="form-control w-auto" value="${h(u.month)}" data-change="ui" data-k="${route}.month">` : u.mode === "custom" ? `<input type="date" class="form-control w-auto" value="${h(u.from || "")}" data-change="ui" data-k="${route}.from" aria-label="From"><input type="date" class="form-control w-auto" value="${h(u.to || "")}" data-change="ui" data-k="${route}.to" aria-label="To">` : ""}`;
+}
+function scCell(v, line, tip) { return `<td class="text-center" ${tipAttr(tip)}><div class="fw-bold ${pctCls(v)}">${pctTxt(v)}</div>${line ? `<div class="small-2 text-muted">${line}</div>` : ""}</td>`; }
+function scoreHeaderCells() {
+  return `<th class="text-center">Delegation</th><th class="text-center">KRA</th><th class="text-center">Tickets</th><th class="text-center sc-th-d">Completion</th><th class="text-center sc-th-d">On-time</th><th class="text-center sc-th-k">KPI<br><small>Auto + Manual</small></th><th class="text-center sc-th-f">Final score</th>`;
+}
+function scoreRowCells(sc) {
+  const t = sc.st, ex = scoreExplain(sc);
+  const sug = scoreSuggestions(sc);
+  return scCell(sc.del, `${t.task.done}/${t.task.total}`, ex.del) + scCell(sc.kra, `${t.kra.done}/${t.kra.total}`, ex.kra) + scCell(sc.tck, `${t.ticket.done}/${t.ticket.total}`, ex.tck) +
+    scCell(sc.completion, `${t.all.done}/${t.all.total}`, ex.completion) + scCell(sc.ontime, `${t.all.late} late`, ex.ontime) +
+    scCell(sc.kpi, sc.kb ? (sc.kb.md != null ? "MD final" : `${sc.kb.auto.toFixed(1)} + ${sc.kb.manual.toFixed(1)}`) : sc.kpiMonths > 1 ? `${sc.kpiMonths}-mo avg` : "", ex.kpi) +
+    `<td class="text-center sc-final-cell" ${tipAttr(ex.final + (sug.length ? "<hr><b>Pulled down by:</b><br>" + sug.map(x => "• " + h(x.area) + (x.lost ? " (−" + x.lost + ")" : "")).join("<br>") : ""))}><span class="final-pill ${sc.final == null ? "" : sc.final >= 80 ? "g" : sc.final >= 60 ? "y" : "r"}">${pctTxt(sc.final)}</span></td>`;
+}
 VIEWS.performance = {
   title: "Performance Scoreboard", icon: "ranking-star", team: true,
   render() {
-    const u = ui("performance");
-    const inRange = rangeFilter(u.from, u.to);
-    let rows = teamUsers().map(x => ({ user: x, email: ek(x.email), ...perfFor(ek(x.email), inRange), ws: workStats(ek(x.email), u.from || "", u.to || S.data.today) })).sort((a, b) => b.score - a.score);
+    const u = ui("performance"); const p = periodState(u); u.sort = u.sort || "final";
+    let rows = teamUsers().map(x => ({ user: x, email: ek(x.email), sc: fullScore(ek(x.email), p.from, p.to) }));
+    const key = { final: r => r.sc.final, completion: r => r.sc.completion, ontime: r => r.sc.ontime, kpi: r => r.sc.kpi }[u.sort] || (r => r.sc.final);
+    rows.sort((a, b) => (key(b) ?? -999) - (key(a) ?? -999));
     rows.forEach((r, i) => { r.rank = i + 1; });
     rows = searchFilter(rows, u.q, r => r.user.name + " " + r.email);
-    const part = (lbl, s, c) => `<div class="flex-fill" style="min-width:110px"><div class="d-flex justify-content-between small-2 fw-semibold"><span>${lbl}</span><span>${s.total ? Math.round(s.score) + "%" : "N/A"}</span></div><div class="bar"><span style="width:${s.total ? Math.max(0, Math.min(100, s.score)) : 0}%;background:${c}"></span></div><div class="small-2 text-muted mt-1">${s.done}/${s.total} done</div></div>`;
-    return `<div class="toolbar"><div><label class="form-label">From</label><input type="date" class="form-control" value="${h(u.from || "")}" data-change="ui" data-k="performance.from"></div>
-      <div><label class="form-label">To</label><input type="date" class="form-control" value="${h(u.to || "")}" data-change="ui" data-k="performance.to"></div>
-      <div class="grow"><label class="form-label">Search</label><input type="search" class="form-control" placeholder="Team member…" value="${h(u.q || "")}" data-input="uisearch" data-k="performance.q"></div>${resetBtn("performance")}</div>
-      <div class="small text-muted mb-3"><i class="fas fa-circle-info me-1"></i>Score = average of Delegation, KRA and Ticket scores. On time = 1, late = ½, fake = −1. Filter uses deadline / KRA date / ticket date.</div>
-      <div class="work-list">${rows.map(r => `<div class="wcard click" data-act="perfDetail" data-email="${h(r.email)}">
-        <div class="d-flex align-items-center gap-3 flex-wrap"><span class="rank ${r.rank <= 3 ? "r" + r.rank : ""}">${r.rank}</span>${person(r.email, "")}
-          ${r.task.late + r.kra.late + r.task.fake + r.kra.fake ? `<span class="chip chip-amber"><i class="fas fa-arrow-down"></i>${r.task.late + r.kra.late} late · ${r.task.fake + r.kra.fake} fake</span>` : ""}
-          <span class="ms-auto d-flex gap-3 align-items-center text-center">
-            <span><span class="d-block small-2 text-muted fw-semibold">Completion</span><b class="${pctCls(r.ws.all.completion)}">${pctTxt(r.ws.all.completion)}</b></span>
-            <span><span class="d-block small-2 text-muted fw-semibold">On-time</span><b class="${pctCls(r.ws.all.ontime)}">${pctTxt(r.ws.all.ontime)}</b></span>
-            <span><span class="d-block small-2 text-muted fw-semibold">Score</span><span class="score-big ${scoreCls(r.score)}" style="font-size:1.5rem">${r.score}%</span></span></span></div>
-        <div class="d-flex gap-3 flex-wrap mt-3">${part("Delegation", r.task, "var(--brand)")}${part("KRA", r.kra, "var(--auto)")}${part("Tickets", r.tck, "var(--orange)")}</div>
-      </div>`).join("") || empty("No team data found", "chart-bar")}</div>`;
+    return `<div class="toolbar">${periodControls("performance", u)}
+      <select class="form-select w-auto" data-change="ui" data-k="performance.sort">${[["final", "Rank by Final score"], ["completion", "Rank by Completion"], ["ontime", "Rank by On-time"], ["kpi", "Rank by KPI"]].map(([v, l]) => `<option value="${v}" ${u.sort === v ? "selected" : ""}>${l}</option>`).join("")}</select>
+      <input type="search" class="form-control" style="max-width:220px" placeholder="Team member…" value="${h(u.q || "")}" data-input="uisearch" data-k="performance.q">
+      ${resetBtn("performance")}<div class="grow"></div><span class="chip chip-brand"><i class="far fa-calendar"></i>${h(p.label)}</span></div>
+      ${rows.length ? `<div class="table-wrap"><table class="tablex sc-table"><thead><tr><th>#</th><th>Employee</th>${scoreHeaderCells()}</tr></thead>
+        <tbody>${rows.map(r => `<tr class="click-row" data-act="perfDetail" data-email="${h(r.email)}"><td><span class="rank ${r.rank <= 3 ? "r" + r.rank : ""}">${r.rank}</span></td><td>${person(r.email)}<div class="small-2 text-muted ms-4 ps-2">${h(r.user.dept || "")}</div></td>${scoreRowCells(r.sc)}</tr>`).join("")}</tbody></table></div>
+        ${SCORE_HELP}` : empty("No team data found", "chart-bar")}`;
   }
 };
 ACT.perfDetail = el => {
-  const email = el.dataset.email, u = ui("performance"), inRange = rangeFilter(u.from, u.to);
+  const email = el.dataset.email, u = ui("performance"), pp = periodState(u), inRange = rangeFilter(pp.from, pp.to);
   const items = [];
   (S.idx.taskIn.get(email) || []).filter(t => inRange(t[4] || t[9])).forEach(t => { const due = parseLocal(t[4]) || new Date(NaN); due.setHours(23, 59, 59, 999); const late = t[6] === "Approved" && (t[11] ? parseLocal(t[11]) : new Date()) > due; items.push({ kind: "Task", id: t[0], title: t[3], st: t[6], late, date: t[9] || t[4], due: t[4], closed: t[12], from: t[1] }); });
   (S.idx.kraIn.get(email) || []).filter(k => inRange(k[4])).forEach(k => { const g = parseLocal(k[4]) || new Date(NaN); g.setHours(23, 59, 59, 999); const late = k[5] === "Done" && (k[8] ? parseLocal(k[8]) : new Date()) > g; items.push({ kind: "KRA", id: k[0], title: k[3], st: k[5], late, date: k[4], due: k[4], closed: k[8], freq: kraFreq(k) }); });
@@ -237,8 +254,8 @@ ACT.perfDetail = el => {
     <td class="text-end">${it.kind === "KRA" && it.st === "Done" ? `<button class="btn btn-danger-soft btn-xs" data-act="fakeKra" data-id="${h(it.id)}">Mark fake</button>` : it.kind === "Task" && it.st === "Approved" ? `<button class="btn btn-danger-soft btn-xs" data-act="fakeTask" data-id="${h(it.id)}">Mark fake</button>` : ""}</td></tr>`;
   const table = list => list.length ? `<div class="table-wrap"><table class="tablex compact"><thead><tr><th>Type</th><th>Work</th><th>Due</th><th>Status</th><th>Closed</th><th></th></tr></thead><tbody>${list.slice(0, 300).map(row).join("")}</tbody></table></div>${list.length > 300 ? `<div class="small text-muted mt-1">Showing 300 of ${list.length}. Narrow the date range to see more.</div>` : ""}` : empty("Nothing here", "inbox");
   const open = items.filter(i => workIsOpen(i.st)), hist = items.filter(i => !workIsOpen(i.st));
-  dialog({ title: `${avatar(email, "sm")} <span class="ms-2">${h(nameOf(email))}</span>${u.from || u.to ? ` <span class="chip chip-outline ms-2">${u.from ? fmtD(u.from) : "Start"} → ${u.to ? fmtD(u.to) : "Today"}</span>` : ""}`, size: "modal-xl", noFooter: true,
-    body: `<h6 class="fw-bold">Pending / active (${open.length})</h6>${table(open)}<h6 class="fw-bold mt-4">Completed & history (${hist.length})</h6>${table(hist)}` });
+  dialog({ title: `${avatar(email, "sm")} <span class="ms-2">${h(nameOf(email))}</span><span class="chip chip-outline ms-2">${h(pp.label)}</span>`, size: "modal-xl", noFooter: true,
+    body: `${scoreChain(fullScore(email, pp.from, pp.to), { compact: true })}<h6 class="fw-bold mt-3">Pending / active (${open.length})</h6>${table(open)}<h6 class="fw-bold mt-4">Completed & history (${hist.length})</h6>${table(hist)}` });
 };
 
 // ================= ANALYTICS =================
@@ -254,7 +271,7 @@ VIEWS.analytics = {
     let from = "", to = S.data.today, label = "All time";
     if (u.mode === "month") { [from, to] = monthRange(u.month); if (to > S.data.today) to = S.data.today; label = monthLabel(u.month); }
     else if (u.mode === "custom") { from = u.from || ""; to = u.to || S.data.today; label = (from ? fmtD(from) : "Start") + " – " + fmtD(to); }
-    const per = team.map(x => ({ x, e: ek(x.email), st: workStats(ek(x.email), from, to) }));
+    const per = team.map(x => { const sc = fullScore(ek(x.email), from, to); return { x, e: ek(x.email), st: sc.st, sc }; });
     const sum = k => per.reduce((s, r) => s + r.st.all[k], 0);
     const tot = { total: sum("total"), done: sum("done"), onTime: sum("onTime"), late: sum("late"), fake: sum("fake"), pending: sum("pending") };
     const comp = tot.total ? Math.round(tot.done / tot.total * 1000) / 10 : null, ont = tot.done ? Math.round(tot.onTime / tot.done * 1000) / 10 : null;
@@ -273,7 +290,7 @@ VIEWS.analytics = {
     const deptMap = {};
     per.forEach(r => { const d = r.x.dept || "Other"; deptMap[d] = deptMap[d] || { t: 0, d: 0 }; deptMap[d].t += r.st.all.total; deptMap[d].d += r.st.all.done; });
     const deptRows = Object.entries(deptMap).filter(([, v]) => v.t).map(([k, v]) => [k, Math.round(v.d / v.t * 1000) / 10]).sort((a, b) => b[1] - a[1]);
-    const ranked = per.filter(r => r.st.all.total).sort((a, b) => (b.st.all.completion ?? 0) - (a.st.all.completion ?? 0) || (b.st.all.ontime ?? 0) - (a.st.all.ontime ?? 0));
+    const ranked = per.filter(r => r.sc.final != null).sort((a, b) => (b.sc.final ?? 0) - (a.sc.final ?? 0));
     S.pendingCharts = [
       ["cTrend", "line", days.map(d => fmtShort(d)), [{ label: "Completed", data: days.map(d => doneBy[d]), borderColor: "#108082", backgroundColor: "rgba(16,128,130,.12)", fill: true, tension: .25, pointRadius: 0 }, { label: "Due", data: days.map(d => dueBy[d]), borderColor: "#94a3b8", borderDash: [5, 4], tension: .25, pointRadius: 0 }]],
       ["cDept", "bar", deptRows.map(d => d[0]), [{ label: "Completion %", data: deptRows.map(d => d[1]), backgroundColor: deptRows.map(d => d[1] >= 80 ? "#059669" : d[1] >= 60 ? "#f59e0b" : "#dc2626"), borderRadius: 6 }], { indexAxis: "y", max: 100 }],
@@ -281,7 +298,7 @@ VIEWS.analytics = {
       ["cType", "bar", ["Delegation", "KRA", "Tickets"], [{ label: "Done", data: ["task", "kra", "ticket"].map(t => typeSum(t, "done")), backgroundColor: "#108082", borderRadius: 6 }, { label: "Not done", data: ["task", "kra", "ticket"].map(t => typeSum(t, "pending") + typeSum(t, "fake")), backgroundColor: "#fca5a5", borderRadius: 6 }], { stacked: true }]
     ];
     const kpi = (icon, tone, v, l, sub, cls = "") => `<div class="stat"><span class="stat-ic tone-${tone}"><i class="fas fa-${icon}"></i></span><span><div class="stat-v ${cls}">${v}</div><div class="stat-l">${l}</div>${sub ? `<div class="stat-s text-muted">${sub}</div>` : ""}</span></div>`;
-    const prow = (r, i) => `<tr><td><span class="rank ${i < 3 ? "r" + (i + 1) : ""}" style="width:24px;height:24px;font-size:.72rem">${i + 1}</span></td><td>${person(r.e)}</td><td class="mono">${r.st.all.done}/${r.st.all.total}</td><td>${badgeSm(r.st.all.completion)}</td><td>${badgeSm(r.st.all.ontime)}</td><td class="mono ${r.st.all.fake ? "text-danger fw-bold" : ""}">${r.st.all.fake}</td></tr>`;
+    const prow = (r, i) => `<tr><td><span class="rank ${i < 3 ? "r" + (i + 1) : ""}" style="width:24px;height:24px;font-size:.72rem">${i + 1}</span></td><td>${person(r.e)}</td><td>${badgeSm(r.st.all.completion)}</td><td>${badgeSm(r.st.all.ontime)}</td><td>${badgeSm(r.sc.kpi == null ? null : Math.round(r.sc.kpi * 10) / 10)}</td><td><b class="${pctCls(r.sc.final)}">${pctTxt(r.sc.final)}</b></td></tr>`;
     return `<div class="toolbar">
       ${seg("analytics.mode", u.mode, [{ v: "month", l: "Month" }, { v: "custom", l: "Dates" }, { v: "all", l: "All time" }])}
       ${u.mode === "month" ? `<input type="month" class="form-control w-auto" value="${h(u.month)}" data-change="ui" data-k="analytics.month">` : u.mode === "custom" ? `<input type="date" class="form-control w-auto" value="${h(u.from || "")}" data-change="ui" data-k="analytics.from" aria-label="From"><input type="date" class="form-control w-auto" value="${h(u.to || "")}" data-change="ui" data-k="analytics.to" aria-label="To">` : ""}
@@ -304,9 +321,9 @@ VIEWS.analytics = {
         <div class="col-lg-6"><div class="cardx cardx-body h-100"><h3 class="section-title"><i class="fas fa-layer-group text-brand"></i>By work type</h3><div class="chart-box"><canvas id="cType"></canvas></div></div></div>
       </div>
       <div class="row g-3">
-        <div class="col-lg-6"><div class="cardx h-100"><div class="cardx-head"><h3><i class="fas fa-trophy text-warning me-2"></i>Top performers</h3></div><div class="table-wrap border-0 rounded-0"><table class="tablex compact"><thead><tr><th></th><th>Employee</th><th>Done</th><th>Completion</th><th>On-time</th><th>Fake</th></tr></thead><tbody>${ranked.slice(0, 7).map(prow).join("") || '<tr><td colspan="6" class="text-muted">No data</td></tr>'}</tbody></table></div></div></div>
-        <div class="col-lg-6"><div class="cardx h-100"><div class="cardx-head"><h3><i class="fas fa-circle-exclamation text-danger me-2"></i>Needs attention</h3></div><div class="table-wrap border-0 rounded-0"><table class="tablex compact"><thead><tr><th></th><th>Employee</th><th>Done</th><th>Completion</th><th>On-time</th><th>Fake</th></tr></thead><tbody>${(() => { const weak = ranked.map((r, i) => [r, i]).filter(([r]) => (r.st.all.completion ?? 100) < 80 || (r.st.all.ontime ?? 100) < 80 || r.st.all.fake).reverse().slice(0, 7);
-          return weak.map(([r, i]) => prow(r, i)).join("") || '<tr><td colspan="6" class="text-success fw-semibold">Everyone is at 80%+ completion and on-time 🎉</td></tr>'; })()}</tbody></table></div></div></div>
+        <div class="col-lg-6"><div class="cardx h-100"><div class="cardx-head"><h3><i class="fas fa-trophy text-warning me-2"></i>Top performers</h3></div><div class="table-wrap border-0 rounded-0"><table class="tablex compact"><thead><tr><th></th><th>Employee</th><th>Completion</th><th>On-time</th><th>KPI</th><th>Final</th></tr></thead><tbody>${ranked.slice(0, 7).map(prow).join("") || '<tr><td colspan="6" class="text-muted">No data</td></tr>'}</tbody></table></div></div></div>
+        <div class="col-lg-6"><div class="cardx h-100"><div class="cardx-head"><h3><i class="fas fa-circle-exclamation text-danger me-2"></i>Needs attention</h3></div><div class="table-wrap border-0 rounded-0"><table class="tablex compact"><thead><tr><th></th><th>Employee</th><th>Completion</th><th>On-time</th><th>KPI</th><th>Final</th></tr></thead><tbody>${(() => { const weak = ranked.map((r, i) => [r, i]).filter(([r]) => (r.sc.final ?? 100) < 80 || (r.st.all.completion ?? 100) < 80 || r.st.all.fake).reverse().slice(0, 7);
+          return weak.map(([r, i]) => prow(r, i)).join("") || '<tr><td colspan="6" class="text-success fw-semibold">Everyone is at 80%+ final score 🎉</td></tr>'; })()}</tbody></table></div></div></div>
       </div>`}`;
   },
   after() {

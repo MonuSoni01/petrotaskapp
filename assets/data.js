@@ -238,15 +238,161 @@ function workStats(email, from, to) {
 function monthRange(m) { const [y, mm] = m.split("-").map(Number); const last = new Date(Date.UTC(y, mm, 0)).getUTCDate(); return [m + "-01", m + "-" + String(last).padStart(2, "0")]; }
 function pctTxt(v) { return v == null ? "—" : (Number.isInteger(v) ? v : v.toFixed(1)) + "%"; }
 function pctCls(v) { return v == null ? "text-muted" : scoreCls(v); }
-function scoreTiles(st, label) {
-  const ring = (v, color) => { const C = 2 * Math.PI * 26, p = v == null ? 0 : Math.max(0, Math.min(100, v));
-    return `<div class="ring sm"><svg width="62" height="62"><circle cx="31" cy="31" r="26" stroke="var(--slate-50)" stroke-width="6" fill="none"/><circle cx="31" cy="31" r="26" stroke="${color}" stroke-width="6" fill="none" stroke-linecap="round" stroke-dasharray="${C}" stroke-dashoffset="${C - p / 100 * C}"/></svg><div class="ring-t" style="color:var(--text)">${v == null ? "—" : Math.round(v) + "%"}</div></div>`; };
-  const row = (n, b) => `<tr><td>${n}</td><td class="mono">${b.done}/${b.total}</td><td class="mono ${pctCls(b.completion)}">${pctTxt(b.completion)}</td><td class="mono ${pctCls(b.ontime)}">${pctTxt(b.ontime)}</td><td class="mono">${b.late}</td><td class="mono">${b.fake ? `<span class="text-danger">${b.fake}</span>` : 0}</td></tr>`;
-  return `<div class="cardx mb-3"><div class="cardx-head"><h3><i class="fas fa-gauge-high text-brand me-2"></i>${h(label)}</h3><span class="small text-muted">Delegation + KRA + Help tickets</span></div>
-    <div class="cardx-body"><div class="d-flex flex-wrap gap-4 align-items-center">
-      <div class="d-flex align-items-center gap-3">${ring(st.all.completion, "var(--brand)")}<div><div class="fw-bold">Completion</div><div class="small text-muted">${st.all.done} of ${st.all.total} done</div></div></div>
-      <div class="d-flex align-items-center gap-3">${ring(st.all.ontime, "var(--green)")}<div><div class="fw-bold">On-time</div><div class="small text-muted">${st.all.onTime} of ${st.all.done} on time</div></div></div>
-      <div class="table-wrap flex-grow-1" style="min-width:280px"><table class="tablex compact"><thead><tr><th>Work</th><th>Done</th><th>Completion</th><th>On-time</th><th>Late</th><th>Fake</th></tr></thead>
-        <tbody>${row("Delegation", st.task)}${row("KRA", st.kra)}${row("Help tickets", st.ticket)}</tbody></table></div>
-    </div></div></div>`;
+// ================= ONE SCORING SYSTEM (used on every screen) =================
+// Work score of a type = (on time × 1 + late × ½ − fake × 1) ÷ total due × 100
+function typeScore(b) { return b.total ? Math.round((b.onTime + 0.5 * b.late - b.fake) / b.total * 1000) / 10 : null; }
+// KPI score of a month = Automated KPIs (from KRA) + Manual KPIs (HOD/HR). MD override replaces it.
+function kpiBreakdown(email, month) {
+  const kpis = userKPIs(email);
+  const r = { has: kpis.length > 0, auto: 0, autoMax: 0, manual: 0, manualMax: 0, other: 0, scored: 0, manualCount: 0 };
+  kpis.forEach(k => {
+    const t = kpiType(k), w = parseFloat(k[4]) || 0, e = kpiEarnedScore(k, email, month);
+    if (t === "auto") { r.auto += e; r.autoMax += w; }
+    else if (t === "manual") { r.manual += e; r.manualMax += w; r.manualCount++; if (manualScoreRow(k, email, month)) r.scored++; }
+    else r.other += w;
+  });
+  r.sys = r.auto + r.manual;
+  const md = mdRow(email, month);
+  r.md = md ? parseFloat(md[4]) || 0 : null; r.mdNote = md ? md[5] : "";
+  r.kpi = r.md != null ? r.md : r.sys;
+  return r;
 }
+function monthsBetween(from, to) {
+  const out = []; let m = (from || to).slice(0, 7); const end = to.slice(0, 7);
+  while (m <= end && out.length < 60) { out.push(m); const [y, mm] = m.split("-").map(Number); m = mm === 12 ? `${y + 1}-01` : `${y}-${String(mm + 1).padStart(2, "0")}`; }
+  return out;
+}
+function firstDataMonth() {
+  if (S.idx._first) return S.idx._first;
+  let m = S.data.today.slice(0, 7);
+  S.data.kraTasks.forEach(r => { const k = monthKeyOf(r[4]); if (k && k < m) m = k; });
+  (S.data.manualScores || []).forEach(r => { const k = String(r[1]).slice(0, 7); if (/^\d{4}-\d{2}$/.test(k) && k < m) m = k; });
+  return (S.idx._first = m);
+}
+// KPI for a date range = average of the monthly KPI scores that exist in that range
+function kpiForRange(email, from, to) {
+  if (!userKPIs(email).length) return { kpi: null, months: 0 };
+  const months = monthsBetween(from || firstDataMonth(), to);
+  if (months.length === 1) { const b = kpiBreakdown(email, months[0]); return { kpi: b.kpi, months: 1, breakdown: b, month: months[0] }; }
+  const list = months.map(m => [m, kpiBreakdown(email, m).kpi]).filter(x => x[1] > 0);
+  const vals = list.map(x => x[1]);
+  return { kpi: vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100 : null, months: vals.length, monthly: list };
+}
+// Everything for one person and one period.
+function fullScore(email, from, to) {
+  const st = workStats(email, from, to);
+  const k = kpiForRange(email, from, to);
+  const sc = { st, del: typeScore(st.task), kra: typeScore(st.kra), tck: typeScore(st.ticket),
+    completion: st.all.completion, ontime: st.all.ontime, kpi: k.kpi, kpiMonths: k.months, kb: k.breakdown || null, kpiMonthly: k.monthly || [] };
+  const parts = [sc.del, sc.kra, sc.tck, sc.kpi].filter(v => v != null);
+  sc.final = parts.length ? Math.round(parts.reduce((a, b) => a + b, 0) / parts.length * 10) / 10 : null;
+  sc.parts = parts.length;
+  return sc;
+}
+function periodOfMonth(m) { const [f, t] = monthRange(m); return [f, t < S.data.today ? t : S.data.today]; }
+
+// Score chain: Delegation → KRA → Tickets → Completion / On-time → KPI (Auto + Manual) → FINAL
+function scoreChain(sc, { title = "", sub = "", compact = false } = {}) {
+  const v = x => x == null ? "—" : pctTxt(x);
+  const ex = scoreExplain(sc);
+  const tipKey = { Delegation: "del", KRA: "kra", Tickets: "tck", Completion: "completion", "On-time": "ontime", "KPI score": "kpi", "Final score": "final" };
+  const box = (cls, icon, label, value, line, valCls) => `<div class="sc-box ${cls}" ${tipAttr(ex[tipKey[label]])}><div class="sc-l"><i class="fas fa-${icon}"></i>${label}<i class="fas fa-circle-info sc-i"></i></div><div class="sc-v ${valCls || pctCls(value)}">${v(value)}</div><div class="sc-s">${line}</div></div>`;
+  const t = sc.st;
+  const kb = sc.kb;
+  const kpiLine = kb ? (kb.md != null ? `MD final · system ${pctTxt(Math.round(kb.sys * 100) / 100)}` : `Auto ${kb.auto.toFixed(1)} + Manual ${kb.manual.toFixed(1)}`) : (sc.kpiMonths ? `avg of ${sc.kpiMonths} month${sc.kpiMonths === 1 ? "" : "s"}` : "no KPI data");
+  const html = `<div class="sc-chain ${compact ? "compact" : ""}">
+    <div class="sc-group"><div class="sc-gl">Work score</div><div class="sc-row">
+      ${box("", "list-check", "Delegation", sc.del, `${t.task.done}/${t.task.total} done${t.task.late ? ` · ${t.task.late} late` : ""}`)}
+      ${box("", "bullseye", "KRA", sc.kra, `${t.kra.done}/${t.kra.total} done${t.kra.late ? ` · ${t.kra.late} late` : ""}`)}
+      ${box("", "headset", "Tickets", sc.tck, `${t.ticket.done}/${t.ticket.total} resolved`)}
+    </div></div>
+    <div class="sc-group"><div class="sc-gl">Discipline</div><div class="sc-row">
+      ${box("", "circle-check", "Completion", sc.completion, `${t.all.done} of ${t.all.total} done`)}
+      ${box("", "stopwatch", "On-time", sc.ontime, `${t.all.late} late · ${t.all.fake} fake`)}
+    </div></div>
+    <div class="sc-group"><div class="sc-gl">KPI</div><div class="sc-row">
+      ${box("kpi", "chart-simple", "KPI score", sc.kpi, kpiLine)}
+    </div></div>
+    <div class="sc-group final"><div class="sc-gl">Result</div><div class="sc-row">
+      ${box("final", "trophy", "Final score", sc.final, `avg of ${sc.parts} part${sc.parts === 1 ? "" : "s"}`)}
+    </div></div>
+  </div>`;
+  if (compact) return html;
+  return `<div class="cardx mb-3"><div class="cardx-head"><h3><i class="fas fa-gauge-high text-brand me-2"></i>${h(title || "Score")}</h3>${sub ? `<span class="small text-muted">${h(sub)}</span>` : ""}</div>
+    <div class="cardx-body">${html}${SCORE_HELP}</div></div>`;
+}
+const SCORE_HELP = `<details class="sc-help"><summary><i class="fas fa-circle-info me-1"></i>How is this calculated?</summary>
+  <ul><li><b>Delegation / KRA / Tickets score</b> = (on time × 1 + late × ½ − fake × 1) ÷ total due × 100.</li>
+  <li><b>Completion</b> = done ÷ total due. <b>On-time</b> = done on or before deadline ÷ done.</li>
+  <li><b>KPI score</b> = Automated KPIs (from KRA tasks) + Manual KPIs (scored by HOD/HR), out of 100. MD score replaces it when set. For more than one month it is the average of the monthly KPI scores.</li>
+  <li><b>Final score</b> = average of Delegation, KRA, Tickets and KPI scores (only parts that have data).</li></ul></details>`;
+// back-compat helper used by older screens
+function scoreTiles(st, label) { return ""; }
+
+// ---------- "How was this calculated?" text for every score (tooltips) ----------
+const n1 = x => (Math.round(x * 100) / 100).toString();
+function typeExplain(name, b, score) {
+  if (!b.total) return `<b>${name}</b><br>No ${name.toLowerCase()} work due in this period, so it is not counted.`;
+  return `<b>${name} score = ${pctTxt(score)}</b><br>On time ${b.onTime} × 1 = ${b.onTime}<br>Late ${b.late} × ½ = ${n1(b.late / 2)}<br>Fake ${b.fake} × −1 = −${b.fake}<br>Not done ${b.pending} × 0 = 0<hr>(${b.onTime} + ${n1(b.late / 2)} − ${b.fake}) ÷ ${b.total} due × 100 = <b>${pctTxt(score)}</b>`;
+}
+function scoreExplain(sc) {
+  const t = sc.st, a = t.all;
+  const parts = [["Delegation", sc.del], ["KRA", sc.kra], ["Tickets", sc.tck], ["KPI", sc.kpi]];
+  const used = parts.filter(p => p[1] != null);
+  let kpi;
+  if (sc.kpi == null) kpi = "<b>KPI score</b><br>No KPI is mapped / scored for this period.";
+  else if (sc.kb) kpi = `<b>KPI score = ${pctTxt(Math.round(sc.kpi * 100) / 100)}</b><br>Automated KPIs (from KRA tasks): ${sc.kb.auto.toFixed(2)} / ${sc.kb.autoMax}<br>Manual KPIs (HOD/HR): ${sc.kb.manual.toFixed(2)} / ${sc.kb.manualMax} (${sc.kb.scored}/${sc.kb.manualCount} scored)<hr>${sc.kb.auto.toFixed(2)} + ${sc.kb.manual.toFixed(2)} = ${sc.kb.sys.toFixed(2)}%` + (sc.kb.md != null ? `<br><b>MD final ${sc.kb.md.toFixed(2)}% replaces it</b>` : "");
+  else kpi = `<b>KPI score = ${pctTxt(sc.kpi)}</b><br>Average of monthly KPI scores:<br>${sc.kpiMonthly.map(([m, v]) => `${monthLabel(m)}: ${n1(v)}%`).join("<br>")}`;
+  return {
+    del: typeExplain("Delegation", t.task, sc.del), kra: typeExplain("KRA", t.kra, sc.kra), tck: typeExplain("Tickets", t.ticket, sc.tck),
+    completion: a.total ? `<b>Completion = ${pctTxt(sc.completion)}</b><br>Done ${a.done} ÷ Due ${a.total} × 100<br><small>Delegation approved + KRA done + Tickets resolved. Fake counts as not done.</small>` : "<b>Completion</b><br>No work due.",
+    ontime: a.done ? `<b>On-time = ${pctTxt(sc.ontime)}</b><br>Done on/before deadline ${a.onTime} ÷ Done ${a.done} × 100<br>Late: ${a.late}` : "<b>On-time</b><br>Nothing completed yet.",
+    kpi,
+    final: used.length ? `<b>Final score = ${pctTxt(sc.final)}</b><br>${used.map(p => `${p[0]}: ${pctTxt(p[1])}`).join("<br>")}<hr>(${used.map(p => n1(p[1])).join(" + ")}) ÷ ${used.length} = <b>${pctTxt(sc.final)}</b>` + (used.length < 4 ? `<br><small>Skipped (no data): ${parts.filter(p => p[1] == null).map(p => p[0]).join(", ")}</small>` : "") : "<b>Final score</b><br>No data in this period."
+  };
+}
+function tipAttr(html) { return html ? `data-tip="${h(html)}" tabindex="0"` : ""; }
+
+// ---------- Suggestions: what pulled the final score down ----------
+function scoreSuggestions(sc) {
+  if (sc.final == null) return [];
+  const t = sc.st, n = sc.parts || 1, out = [];
+  const add = (area, value, text) => { if (value != null && value < 85) out.push({ area, lost: Math.round((100 - value) / n * 10) / 10, text }); };
+  add("Delegation", sc.del, `${t.task.pending ? t.task.pending + " delegated task(s) not done" : ""}${t.task.late ? (t.task.pending ? ", " : "") + t.task.late + " done late" : ""}${t.task.fake ? ", " + t.task.fake + " fake" : ""} — close delegated tasks before the deadline`);
+  add("KRA", sc.kra, `${t.kra.pending ? t.kra.pending + " KRA not done" : ""}${t.kra.late ? (t.kra.pending ? ", " : "") + t.kra.late + " done late" : ""}${t.kra.fake ? ", " + t.kra.fake + " fake" : ""} — mark daily KRAs done on the same day`);
+  add("Tickets", sc.tck, `${t.ticket.pending ? t.ticket.pending + " ticket(s) unresolved" : ""}${t.ticket.late ? (t.ticket.pending ? ", " : "") + t.ticket.late + " resolved late" : ""} — resolve help tickets on time`);
+  if (sc.kb) {
+    const autoP = sc.kb.autoMax ? sc.kb.auto / sc.kb.autoMax * 100 : null, manP = sc.kb.manualMax ? sc.kb.manual / sc.kb.manualMax * 100 : null;
+    const why = [];
+    if (autoP != null && autoP < 85) why.push(`Automated KPI ${sc.kb.auto.toFixed(1)}/${sc.kb.autoMax} (KRA-linked work late/pending)`);
+    if (manP != null && manP < 85) why.push(sc.kb.scored < sc.kb.manualCount ? `Manual KPI not fully scored (${sc.kb.scored}/${sc.kb.manualCount})` : `Manual KPI ${sc.kb.manual.toFixed(1)}/${sc.kb.manualMax} from HOD/HR`);
+    add("KPI", sc.kpi, why.join("; ") || "improve KPI results");
+  } else add("KPI", sc.kpi, "KPI average is low across the months — check KPI breakdown month by month");
+  out.sort((a, b) => b.lost - a.lost);
+  if (sc.ontime != null && sc.ontime < 80) out.push({ area: "On-time", lost: 0, text: `only ${pctTxt(sc.ontime)} of finished work was on time (${t.all.late} late) — plan work before deadlines` });
+  if (t.all.fake) out.push({ area: "Fake work", lost: 0, text: `${t.all.fake} item(s) marked fake (−1 each)` });
+  return out.slice(0, 3).map(x => ({ ...x, text: x.text.replace(/^ — /, "").replace(/^, /, "") }));
+}
+function suggestionText(sc) {
+  const s = scoreSuggestions(sc);
+  if (!s.length) return sc.final == null ? "" : "Strong performance — keep it up.";
+  return s.map(x => `${x.area}${x.lost ? ` (−${x.lost})` : ""}: ${x.text}`).join(" · ");
+}
+
+// ---------- tooltip engine (works with mouse hover and tap) ----------
+(function () {
+  let tipEl = null, owner = null;
+  function show(el) {
+    if (!tipEl) { tipEl = document.createElement("div"); tipEl.className = "tipx"; document.body.appendChild(tipEl); }
+    owner = el; tipEl.innerHTML = el.getAttribute("data-tip"); tipEl.style.display = "block";
+    const r = el.getBoundingClientRect(), tw = tipEl.offsetWidth, th = tipEl.offsetHeight;
+    let left = Math.min(Math.max(8, r.left + r.width / 2 - tw / 2), window.innerWidth - tw - 8);
+    let top = r.top - th - 8; if (top < 8) top = r.bottom + 8;
+    tipEl.style.left = left + "px"; tipEl.style.top = top + "px";
+  }
+  function hide() { if (tipEl) tipEl.style.display = "none"; owner = null; }
+  document.addEventListener("mouseover", e => { const el = e.target.closest("[data-tip]"); if (el && el !== owner) show(el); else if (!el && owner) hide(); });
+  document.addEventListener("focusin", e => { const el = e.target.closest("[data-tip]"); if (el) show(el); });
+  document.addEventListener("click", e => { const el = e.target.closest("[data-tip]"); if (el && "ontouchstart" in window) { owner === el ? hide() : show(el); } else if (!el) hide(); }, true);
+  window.addEventListener("scroll", hide, true);
+})();
