@@ -1,6 +1,6 @@
 /* ============ Reports: printable performance report (notice board) ============ */
 function reportPeople() {
-  const list = isAdmin() ? (S.data.users || []).filter(x => x.active) : teamUsers();
+  const list = teamUsers();
   return list.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
 }
 function reportPeriod(u) {

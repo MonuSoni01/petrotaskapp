@@ -11,8 +11,8 @@ function taskCard(t, { showTo = false, actions = true } = {}) {
   let btns = "";
   if (actions) {
     if (mine && open && st !== "Submitted" && st !== "Extension Requested") btns = `<button class="btn btn-ghost btn-sm" data-act="extReq" data-id="${h(t[0])}"><i class="fas fa-calendar-plus me-1"></i>Extension</button><button class="btn btn-brand btn-sm" data-act="submitTask" data-id="${h(t[0])}"><i class="fas fa-paper-plane me-1"></i>Submit</button>`;
-    else if (canReview(t) && st === "Submitted") btns = `<button class="btn btn-danger-soft btn-sm" data-act="reopenTask" data-id="${h(t[0])}">Reopen</button><button class="btn btn-success btn-sm" data-act="approveTask" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Approve</button>`;
-    else if (canReview(t) && st === "Extension Requested") btns = `<button class="btn btn-danger-soft btn-sm" data-act="extDecide" data-d="reject" data-id="${h(t[0])}">Reject</button><button class="btn btn-success btn-sm" data-act="extDecide" data-d="approve" data-id="${h(t[0])}">Accept extension</button>`;
+    else if (canApprove(t) && st === "Submitted") btns = `<button class="btn btn-danger-soft btn-sm" data-act="rejectTask" data-id="${h(t[0])}"><i class="fas fa-ban me-1"></i>Reject</button><button class="btn btn-ghost btn-sm" data-act="reopenTask" data-id="${h(t[0])}"><i class="fas fa-rotate-left me-1"></i>Reopen</button><button class="btn btn-success btn-sm" data-act="approveTask" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Approve</button>`;
+    else if (canApprove(t) && st === "Extension Requested") btns = `<button class="btn btn-danger-soft btn-sm" data-act="extDecide" data-d="reject" data-id="${h(t[0])}">Reject</button><button class="btn btn-success btn-sm" data-act="extDecide" data-d="approve" data-id="${h(t[0])}">Accept extension</button>`;
   }
   return `<div class="wcard click ${accent}" data-act="openTask" data-id="${h(t[0])}">
     <div class="wcard-top">${statusChip(st)}${prioChip(t[5])}${dueInfo(t[4], open && !isAwaiting(st))}</div>
@@ -52,7 +52,7 @@ function myCounts() {
 }
 function reviewQueue() {
   const mine = me();
-  return S.data.tasks.filter(t => isAwaiting(t[6]) && (ek(t[1]) === mine || S.idx.team.has(ek(t[2]))));
+  return S.data.tasks.filter(t => isAwaiting(t[6]) && canApprove(t));
 }
 
 // ================= HOME =================
@@ -63,7 +63,7 @@ VIEWS.home = {
     const pct = todayProgress(me());
     const rq = canManage() ? reviewQueue() : [];
     const approvals = rq.filter(t => t[6] === "Submitted"), exts = rq.filter(t => t[6] === "Extension Requested");
-    const teamOverdue = canManage() ? S.data.tasks.filter(t => S.idx.team.has(ek(t[2])) && workIsOpen(t[6]) && !isAwaiting(t[6]) && d10(t[4]) && d10(t[4]) < S.data.today) : [];
+    const teamOverdue = canManage() ? S.data.tasks.filter(t => S.idx.down.has(ek(t[2])) && workIsOpen(t[6]) && !isAwaiting(t[6]) && d10(t[4]) && d10(t[4]) < S.data.today) : [];
     const C = 2 * Math.PI * 30;
     const upNext = sortTasks(c.pending.slice(), "due").slice(0, 6);
     const todayKra = c.kra.slice().sort((a, b) => String(a[4]).localeCompare(String(b[4]))).slice(0, 6);

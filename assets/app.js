@@ -159,6 +159,7 @@ $("#loginForm").addEventListener("submit", async e => {
   try {
     const res = await api("login", { email: $("#loginEmail").value, password: $("#loginPass").value });
     S.token = res.sessionToken; S.user = res.user; saveSession();
+    try { localStorage.setItem("tm_last_email", res.user.email); } catch (e) {}
     $("#loginPass").value = "";
     btn.innerHTML = '<span class="spinner-border me-2"></span>Loading your data…';
     const cached = await Cache.get("data:" + ek(res.user.email));
@@ -189,7 +190,7 @@ ACT.toggleTheme = () => {
   $("#themeIcon").className = "fas " + (document.documentElement.getAttribute("data-bs-theme") === "dark" ? "fa-sun" : "fa-moon");
   let sess = null;
   try { sess = JSON.parse(localStorage.getItem("tm_session") || "null"); } catch (e) {}
-  if (!sess || !sess.token || !sess.user) return showLogin("");
+  if (!sess || !sess.token || !sess.user) { try { $("#loginEmail").value = localStorage.getItem("tm_last_email") || ""; } catch (e) {} return showLogin(""); }
   S.token = sess.token; S.user = sess.user;
   const cached = await Cache.get("data:" + ek(sess.user.email));
   if (cached && cached.data) {

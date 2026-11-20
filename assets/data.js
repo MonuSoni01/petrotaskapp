@@ -24,6 +24,7 @@ function buildIndex(data) {
   data.activity = data.activity || [];
   return {
     team: new Set((data.managedEmails || []).map(ek)),
+    down: new Set((data.downlineEmails || data.managedEmails || []).map(ek)), // everyone below me in the reporting tree
     users: new Map((data.users || []).map(u => [ek(u.email), u])),
     taskById: new Map(data.tasks.map(r => [String(r[0]), r])),
     taskIn: byKey(data.tasks, r => ek(r[2])),
@@ -40,9 +41,28 @@ function buildIndex(data) {
 function me() { return ek(S.user?.email); }
 function isAdmin() { return Boolean(S.data?.admin || ek(S.user?.role) === "admin"); }
 function canManage() { return Boolean(S.data?.canManage); }
-function teamUsers() { return (S.data?.users || []).filter(u => S.idx.team.has(ek(u.email))).sort((a, b) => String(a.name).localeCompare(String(b.name))); }
+// People I can see/evaluate = my whole reporting tree (MD sees everyone, HOD sees own people)
+function teamUsers() { return (S.data?.users || []).filter(u => S.idx.down.has(ek(u.email))).sort((a, b) => String(a.name).localeCompare(String(b.name))); }
+// People I can assign tasks to = direct reports only
+function directUsers() { return (S.data?.users || []).filter(u => S.idx.team.has(ek(u.email))).sort((a, b) => String(a.name).localeCompare(String(b.name))); }
 function workIsOpen(s) { return !["Approved", "Done", "Closed", "Rejected", "Cancelled"].includes(s); }
-function canReview(t) { return ek(t[1]) === me() || S.idx.team.has(ek(t[2])); }
+function canReview(t) { return ek(t[1]) === me() || S.idx.down.has(ek(t[2])); } // can view / chat / mark fake
+// Approve / reopen / reject / extension: only the person who delegated the task.
+// If that person is no longer active, the assignee's manager takes over.
+function canApprove(t) {
+  if (ek(t[1]) === me()) return true;
+  const owner = S.idx.users.get(ek(t[1]));
+  return !(owner && owner.active !== false) && S.idx.team.has(ek(t[2]));
+}
+// Everyone below a person in the reporting tree (HOD → team → their team …)
+function downline(email) {
+  const kids = new Map();
+  (S.data.users || []).forEach(u => String(u.manager || "").toLowerCase().split(/[\s,;|<>]+/).filter(x => x.includes("@")).forEach(m => {
+    if (!kids.has(m)) kids.set(m, []); kids.get(m).push(ek(u.email)); }));
+  const out = new Set(), q = [ek(email)];
+  while (q.length) { const x = q.shift(); (kids.get(x) || []).forEach(k => { if (!out.has(k) && k !== ek(email)) { out.add(k); q.push(k); } }); }
+  return out;
+}
 function isAwaiting(s) { return s === "Submitted" || s === "Extension Requested"; }
 
 // ---------- KPI scoring (unchanged formulas) ----------
@@ -126,6 +146,8 @@ function parseLegacy(seg) {
   if ((m = seg.match(/^Admin \(Extension Rejected\):\s*([\s\S]*)$/i))) return { type: "extension_rejected", side: "by", message: m[1] };
   if ((m = seg.match(/^Admin \(Reopened\):\s*([\s\S]*)$/i))) return { type: "reopened", side: "by", message: m[1] };
   if ((m = seg.match(/^Admin \(Approved\):\s*([\s\S]*)$/i))) return { type: "approved", side: "by", message: m[1] };
+  if ((m = seg.match(/^Admin \(Rejected\):\s*([\s\S]*)$/i))) return { type: "rejected", side: "by", message: m[1] };
+  if ((m = seg.match(/^Admin \(Cancelled\):\s*([\s\S]*)$/i))) return { type: "cancelled", side: "by", message: m[1] };
   if ((m = seg.match(/^Admin Penalty: Marked Fake \(([\s\S]*)\)$/i))) return { type: "fake", side: "by", message: m[1] };
   if ((m = seg.match(/^Admin[^:]*:\s*([\s\S]*)$/i))) return { type: "note", side: "by", message: m[1] };
   return { type: "note", side: "", message: seg };
@@ -172,7 +194,12 @@ const EVENT_LABEL = {
   fake: { text: "Marked fake (penalty)", icon: "fa-ban", cls: "chip-red" },
   comment: { text: "", icon: "fa-comment", cls: "" },
   note: { text: "Note", icon: "fa-note-sticky", cls: "chip-slate" },
-  reassigned: { text: "Reassigned (leave cover)", icon: "fa-people-arrows", cls: "chip-slate" }
+  reassigned: { text: "Reassigned (leave cover)", icon: "fa-people-arrows", cls: "chip-slate" },
+  rejected: { text: "Rejected (−1 penalty)", icon: "fa-ban", cls: "chip-red" },
+  cancelled: { text: "Task cancelled", icon: "fa-xmark", cls: "chip-slate" },
+  ticket_created: { text: "Ticket raised", icon: "fa-ticket", cls: "chip-brand" },
+  ticket_resolved: { text: "Ticket resolved", icon: "fa-circle-check", cls: "chip-green" },
+  ticket_reopened: { text: "Ticket reopened", icon: "fa-rotate-left", cls: "chip-red" }
 };
 // latest requested extension date for a task
 function requestedExtDate(t) {

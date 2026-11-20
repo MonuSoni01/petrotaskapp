@@ -21,7 +21,7 @@ function kpiBoard(email, month, { editable, route }) {
   const totalW = sum(kpis, w);
   const { sys, md, final } = finalMonthly(email, month);
   const scored = manual.filter(k => manualScoreRow(k, email, month)).length;
-  const canFake = editable && (isAdmin() || S.idx.team.has(ek(email)));
+  const canFake = editable && S.idx.down.has(ek(email));
 
   const eq = (cls, icon, label, val, max, line) => `<div class="kq-box ${cls}"><div class="kq-l"><i class="fas fa-${icon} me-1"></i>${label}</div><div class="kq-v">${val}${max != null ? `<small> / ${max}</small>` : ""}</div><div class="kq-s">${line}</div></div>`;
   const summary = `<div class="cardx mb-3"><div class="cardx-head"><h3><i class="fas fa-chart-simple text-brand me-2"></i>KPI score breakdown · ${h(monthLabel(month))}</h3>
@@ -109,7 +109,7 @@ VIEWS.evaluation = {
     const u = ui("evaluation");
     if (p.emp) { u.emp = p.emp; delete p.emp; } if (p.month) { u.month = p.month; delete p.month; }
     u.month = u.month || S.data.today.slice(0, 7);
-    const people = (isAdmin() ? (S.data.users || []).filter(x => x.active) : teamUsers()).slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    const people = teamUsers();
     if (!u.emp && people.length) u.emp = ek(people.find(x => S.idx.team.has(ek(x.email)))?.email || people[0].email);
     const controls = `<div class="toolbar">
       <div class="grow"><label class="form-label">Employee</label><select class="form-select" data-change="ui" data-k="evaluation.emp">${people.map(x => `<option value="${h(ek(x.email))}" ${ek(x.email) === u.emp ? "selected" : ""}>${h(x.name)} · ${h(x.dept || x.role)}</option>`).join("")}</select></div>

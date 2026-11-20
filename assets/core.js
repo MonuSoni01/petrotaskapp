@@ -8,7 +8,16 @@ const S = {
 };
 
 // ---------- API ----------
-async function api(action, args = {}, { timeout = 150000 } = {}) {
+async function api(action, args = {}, opts = {}) {
+  try { return await apiOnce(action, args, opts); }
+  catch (e) {
+    // A single "session expired" can be a momentary server hiccup: wait and try once more
+    // before signing the user out.
+    if (e.authRetry && !opts._retried) { await new Promise(r => setTimeout(r, 1500)); return apiOnce(action, args, { ...opts, _retried: true, _final: true }); }
+    throw e;
+  }
+}
+async function apiOnce(action, args = {}, { timeout = 150000, _final = false } = {}) {
   if (!CFG.API_URL || /PASTE_YOUR/.test(CFG.API_URL)) throw new Error("API URL is not set in config.js");
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeout);
@@ -26,7 +35,10 @@ async function api(action, args = {}, { timeout = 150000 } = {}) {
   try { json = await res.json(); } catch (e) { throw new Error("Unexpected server response. Check the Apps Script deployment (access must be 'Anyone')."); }
   if (!json || json.success === false) {
     const msg = (json && (json.error || json.message)) || "Request failed.";
-    if (/AUTH_REQUIRED/.test(msg)) { onAuthExpired(); throw new Error("Your session expired. Please sign in again."); }
+    if (/AUTH_REQUIRED/.test(msg)) {
+      if (!_final && action !== "login") { const err = new Error("AUTH_RETRY"); err.authRetry = true; throw err; }
+      onAuthExpired(); throw new Error("Your session expired. Please sign in again.");
+    }
     throw new Error(msg);
   }
   return json;

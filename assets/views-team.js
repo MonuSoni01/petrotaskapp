@@ -8,7 +8,10 @@ VIEWS.approvals = {
     const rq = reviewQueue();
     const subs = rq.filter(t => t[6] === "Submitted").sort((a, b) => String(a[11] || a[9]).localeCompare(String(b[11] || b[9])));
     const exts = rq.filter(t => t[6] === "Extension Requested");
-    const tabs = seg("approvals.tab", u.tab, [{ v: "tasks", l: "Task approvals", icon: "check-double", c: subs.length }, { v: "ext", l: "Extension requests", icon: "calendar-plus", c: exts.length }, { v: "history", l: "Approved history", icon: "clock-rotate-left" }]);
+    const below = S.idx.down;
+    const teamTasks = S.data.tasks.filter(t => ek(t[1]) !== me() && (below ? below.has(ek(t[1])) : true) && workIsOpen(t[6]));
+    const tabs = seg("approvals.tab", u.tab, [{ v: "tasks", l: "Task approvals", icon: "check-double", c: subs.length }, { v: "ext", l: "Extension requests", icon: "calendar-plus", c: exts.length }, { v: "history", l: "Approved history", icon: "clock-rotate-left" }, { v: "team", l: "Team view", icon: "eye", c: teamTasks.filter(t => isAwaiting(t[6])).length }]);
+    if (u.tab === "team") return teamView(u, teamTasks, tabs);
     const search = `<input type="search" class="form-control" style="max-width:240px" placeholder="Search…" value="${h(u.q || "")}" data-input="uisearch" data-k="approvals.q">`;
     const q = t => t[3] + " " + nameOf(t[2]);
     if (u.tab === "history") {
@@ -31,13 +34,32 @@ VIEWS.approvals = {
           : sub && (sub.message || sub.attachment) ? `<div class="info-box">${sub.message ? `<div class="small">${linkify(sub.message)}</div>` : ""}${sub.attachment ? `<a class="att" href="${safeUrl(sub.attachment)}" target="_blank" rel="noopener"><i class="fas fa-paperclip"></i>View submitted file</a>` : ""}</div>` : ""}
         <div class="wcard-actions"><button class="btn btn-ghost btn-sm me-auto" data-act="openTask" data-id="${h(t[0])}"><i class="far fa-comments me-1"></i>Full history</button>
           ${u.tab === "ext" ? `<button class="btn btn-danger-soft btn-sm" data-act="extDecide" data-d="reject" data-id="${h(t[0])}">Reject</button><button class="btn btn-success btn-sm" data-act="extDecide" data-d="approve" data-id="${h(t[0])}"><i class="fas fa-calendar-check me-1"></i>Accept</button>`
-            : `<button class="btn btn-danger-soft btn-sm" data-act="reopenTask" data-id="${h(t[0])}">Reopen</button><button class="btn btn-success btn-sm" data-act="approveTask" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Approve</button>`}</div>
+            : `<button class="btn btn-danger-soft btn-sm" data-act="rejectTask" data-id="${h(t[0])}"><i class="fas fa-ban me-1"></i>Reject</button><button class="btn btn-ghost btn-sm" data-act="reopenTask" data-id="${h(t[0])}"><i class="fas fa-rotate-left me-1"></i>Reopen</button><button class="btn btn-success btn-sm" data-act="approveTask" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Approve</button>`}</div>
       </div>`;
     };
     return `<div class="toolbar">${tabs}<div class="grow"></div>${search}</div>
       <div class="work-grid">${list.map(card).join("") || `<div style="grid-column:1/-1">${empty(u.tab === "ext" ? "No extension requests" : "No tasks waiting for approval", "circle-check")}</div>`}</div>`;
   }
 };
+
+// View-only: what each HOD / manager below me has delegated and is waiting to approve
+function teamView(u, all, tabs) {
+  u.tf = u.tf || "awaiting"; u.by = u.by || "all";
+  const over = t => !isAwaiting(t[6]) && d10(t[4]) && d10(t[4]) < S.data.today;
+  const F = { awaiting: all.filter(t => isAwaiting(t[6])), overdue: all.filter(over), open: all };
+  let list = (F[u.tf] || F.awaiting).filter(t => u.by === "all" || ek(t[1]) === u.by);
+  list = searchFilter(list, u.q, t => t[3] + " " + nameOf(t[1]) + " " + nameOf(t[2]));
+  const groups = new Map();
+  sortTasks(list.slice(), "due").forEach(t => { const k = ek(t[1]); if (!groups.has(k)) groups.set(k, []); groups.get(k).push(t); });
+  const owners = [...new Set(all.map(t => ek(t[1])))].sort((a, b) => String(nameOf(a)).localeCompare(String(nameOf(b))));
+  return `<div class="toolbar">${tabs}<div class="grow"></div>
+      ${fchips("approvals.tf", u.tf, [{ v: "awaiting", l: "Waiting for their approval", c: F.awaiting.length }, { v: "overdue", l: "Overdue", c: F.overdue.length }, { v: "open", l: "All open", c: F.open.length }])}
+      <select class="form-select w-auto" data-change="ui" data-k="approvals.by"><option value="all">All managers / HODs</option>${owners.map(e => `<option value="${h(e)}" ${u.by === e ? "selected" : ""}>${h(nameOf(e))}</option>`).join("")}</select>
+      <input type="search" class="form-control" style="max-width:200px" placeholder="Search…" value="${h(u.q || "")}" data-input="uisearch" data-k="approvals.q"></div>
+    <div class="alert alert-info small py-2"><i class="fas fa-eye me-1"></i><b>View only.</b> These tasks were delegated by people in your team. Only the person who delegated a task can approve, reopen or reject it.</div>
+    ${groups.size ? [...groups.entries()].map(([owner, ts]) => `<div class="tv-group"><div class="tv-head">${person(owner, "")}<span class="chip chip-violet">${ts.filter(t => isAwaiting(t[6])).length} waiting for approval</span><span class="chip chip-outline">${ts.length} shown</span></div>
+      <div class="work-grid">${ts.map(t => taskCard(t, { showTo: true, actions: false })).join("")}</div></div>`).join("") : empty("Nothing here", "eye")}`;
+}
 
 // ================= DELEGATE (delegation dashboard) =================
 VIEWS.delegate = {
@@ -47,7 +69,7 @@ VIEWS.delegate = {
     if (p.f) { u.f = p.f; if (p.f === "overdue") u.scope = "team"; delete p.f; }
     if (p.to) { const to = ek(p.to); delete p.to; setTimeout(() => openNewTask([to]), 50); }
     u.f = u.f || "open"; u.sort = u.sort || "new"; u.scope = u.scope || "me"; u.person = u.person || "";
-    const mineAll = u.scope === "team" ? S.data.tasks.filter(t => S.idx.team.has(ek(t[2]))) : (S.idx.taskOut.get(me()) || []);
+    const mineAll = u.scope === "team" ? S.data.tasks.filter(t => S.idx.down.has(ek(t[2]))) : (S.idx.taskOut.get(me()) || []);
     const base = u.person ? mineAll.filter(t => ek(t[2]) === u.person) : mineAll;
     const over = t => workIsOpen(t[6]) && !isAwaiting(t[6]) && d10(t[4]) && d10(t[4]) < S.data.today;
     const F = {
@@ -72,7 +94,7 @@ VIEWS.delegate = {
     return `<div class="d-flex flex-wrap gap-2 align-items-center mb-3">
         ${seg("delegate.scope", u.scope, [{ v: "me", l: "Delegated by me", icon: "user" }, { v: "team", l: "My whole team", icon: "users" }])}
         <div class="flex-grow-1"></div>
-        <button class="btn btn-brand" data-act="newTask" ${teamUsers().length ? "" : "disabled"}><i class="fas fa-plus me-1"></i>New task</button></div>
+        <button class="btn btn-brand" data-act="newTask" ${directUsers().length ? "" : "disabled"}><i class="fas fa-plus me-1"></i>New task</button></div>
       <div class="tiles tiles-6 mb-3">
         ${tile("open", "list-check", "amber", F.open.length, "Open")}
         ${tile("overdue", "triangle-exclamation", "red", F.overdue.length, "Overdue")}
@@ -100,7 +122,7 @@ VIEWS.delegate = {
 ACT.pickPerson = el => { const u = ui("delegate"); u.person = u.person === el.dataset.e ? "" : el.dataset.e; u.page = 0; rerender(true); };
 ACT.newTask = () => openNewTask([]);
 function openNewTask(pre) {
-  const team = teamUsers();
+  const team = directUsers();
   if (!team.length) return toast("No active direct reports to assign.", "warn");
   dialog({
     title: '<i class="fas fa-paper-plane text-brand me-2"></i>New task', submit: '<i class="fas fa-paper-plane me-1"></i>Assign task', size: "modal-lg",
@@ -263,7 +285,7 @@ VIEWS.analytics = {
   title: "Analytics", icon: "chart-pie", team: true,
   render() {
     const u = ui("analytics"); u.mode = u.mode || "month"; u.month = u.month || S.data.today.slice(0, 7); u.dept = u.dept || "all"; u.emp = u.emp || "all";
-    let team = isAdmin() ? (S.data.users || []).filter(x => x.active) : teamUsers();
+    let team = teamUsers();
     const depts = [...new Set(team.map(x => x.dept).filter(Boolean))].sort();
     if (u.dept !== "all") team = team.filter(x => x.dept === u.dept);
     const empOpts = team.slice().sort((a, b) => String(a.name).localeCompare(String(b.name)));

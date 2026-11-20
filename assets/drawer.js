@@ -31,7 +31,6 @@ async function refreshThread(id, force) {
   } catch (e) { /* silent: next poll will retry */ }
   finally { threadBusy = false; }
 }
-setInterval(() => { if (drawerTaskId && document.visibilityState === "visible") refreshThread(drawerTaskId); }, 15000);
 
 function openTask(id) {
   const t = S.idx.taskById.get(String(id));
@@ -51,10 +50,15 @@ function renderDrawer(scroll) {
   if (!t) return;
   const open = workIsOpen(t[6]);
   const long = String(t[3] || "").length > 140;
+  // Header is from MY point of view: who am I talking to?
+  const iAssigned = ek(t[1]) === me(), iGot = ek(t[2]) === me();
+  const other = iAssigned && !iGot ? t[2] : iGot && !iAssigned ? t[1] : "";
+  const who = other
+    ? `<div class="dh-name">${h(nameOf(other))}</div><div class="dh-route small">${iAssigned ? `<i class="fas fa-arrow-up-right-from-square me-1"></i>You assigned this task to ${h(nameOf(other).split(" ")[0])}` : `<i class="fas fa-inbox me-1"></i>${h(nameOf(other).split(" ")[0])} assigned this task to you`}</div>`
+    : `<div class="dh-name">${h(nameOf(t[1]))} <i class="fas fa-arrow-right-long mx-1 text-muted small"></i> ${h(nameOf(t[2]))}</div><div class="dh-route small"><i class="fas fa-eye me-1"></i>Team task · you are viewing</div>`;
   $("#drawerHead").innerHTML = `
-    <div class="dh-top">${avatar(t[1], "lg")}
-      <div class="min-w-0 flex-grow-1">
-        <div class="dh-route"><span class="fw-bold">${h(nameOf(t[1]))}</span><i class="fas fa-arrow-right-long mx-2"></i><span class="fw-bold">${h(nameOf(t[2]))}</span></div>
+    <div class="dh-top">${other ? avatar(other, "lg") : `<span class="dh-pair">${avatar(t[1], "sm")}${avatar(t[2], "sm")}</span>`}
+      <div class="min-w-0 flex-grow-1">${who}
         <div class="d-flex flex-wrap gap-1 mt-1">${statusChip(t[6])}${prioChip(t[5])}</div>
       </div></div>`;
   $("#drawerMeta").innerHTML = `
@@ -134,7 +138,7 @@ function eventHtml(e, t, prevActor) {
 function drawerFooter(t) {
   const id = h(t[0]);
   const mine = ek(t[2]) === me();
-  const reviewer = canReview(t);
+  const reviewer = canApprove(t);
   const st = t[6];
   const btns = [];
   if (mine && workIsOpen(st) && st !== "Submitted") {
@@ -142,14 +146,17 @@ function drawerFooter(t) {
     btns.push(`<button class="btn btn-brand btn-sm" data-act="submitTask" data-id="${id}"><i class="fas fa-paper-plane me-1"></i>Submit work</button>`);
   }
   if (reviewer && st === "Submitted") {
-    btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="reopenTask" data-id="${id}"><i class="fas fa-rotate-left me-1"></i>Reopen</button>`);
+    btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="rejectTask" data-id="${id}"><i class="fas fa-ban me-1"></i>Reject</button>`);
+    btns.push(`<button class="btn btn-ghost btn-sm" data-act="reopenTask" data-id="${id}"><i class="fas fa-rotate-left me-1"></i>Reopen</button>`);
     btns.push(`<button class="btn btn-success btn-sm" data-act="approveTask" data-id="${id}"><i class="fas fa-check me-1"></i>Approve & close</button>`);
   }
   if (reviewer && st === "Extension Requested") {
     btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="extDecide" data-d="reject" data-id="${id}"><i class="fas fa-xmark me-1"></i>Reject extension</button>`);
     btns.push(`<button class="btn btn-success btn-sm" data-act="extDecide" data-d="approve" data-id="${id}"><i class="fas fa-calendar-check me-1"></i>Accept extension</button>`);
   }
-  if ((reviewer || isAdmin()) && st === "Approved" && !mine) btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="fakeTask" data-id="${id}"><i class="fas fa-ban me-1"></i>Mark fake</button>`);
+  if (reviewer && ["Pending", "Reopened"].includes(st)) btns.push(`<button class="btn btn-ghost btn-sm" data-act="rejectTask" data-mode="cancel" data-id="${id}"><i class="fas fa-xmark me-1"></i>Cancel task</button>`);
+  if (!reviewer && !mine && workIsOpen(st)) btns.push(`<div class="view-only w-100"><i class="fas fa-eye me-1"></i>View only — ${h(nameOf(t[1]))} approves this task</div>`);
+  if ((canReview(t) || isAdmin()) && st === "Approved" && !mine) btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="fakeTask" data-id="${id}"><i class="fas fa-ban me-1"></i>Mark fake</button>`);
   const canChat = mine || reviewer || isAdmin();
   return (btns.length ? `<div class="drawer-actions">${btns.join("")}</div>` : "") + (canChat ? `
     <div id="chatPreview" class="chat-preview d-none"></div>
@@ -184,19 +191,12 @@ document.addEventListener("keydown", e => {
 document.addEventListener("submit", async e => {
   if (e.target.id !== "composer") return;
   e.preventDefault();
-  const form = e.target, id = form.dataset.id, text = $("#chatText").value.trim(), input = $("#chatFile");
+  const id = e.target.dataset.id, text = $("#chatText").value.trim(), input = $("#chatFile");
   if (!text && !input.files.length) return;
-  const btn = form.querySelector(".send-btn"); btn.disabled = true;
-  try {
-    const file = await readFile(input);
-    patchTask(id, {}, { type: "comment", message: text, attachment: file ? "#uploading" : "" });
-    $("#chatText").value = ""; $("#chatText").style.height = "auto"; ACT.clearChatFile();
-    renderDrawer(true);
-    btn.disabled = false; $("#chatText").focus();
-    await api("addComment", { id, message: text, file });
-    await refreshThread(id, true); // only this chat — no full reload
-  } catch (err) { toast(err.message, "err"); refreshThread(id, true); }
-  finally { btn.disabled = false; }
+  let file = null;
+  try { file = await readFile(input); } catch (err) { return toast(err.message, "err"); }
+  $("#chatText").value = ""; $("#chatText").style.height = "auto"; ACT.clearChatFile(); $("#chatText").focus();
+  sendChat(id, text, file); // realtime.js: shows instantly, retries safely
 });
 
 // ---------- shared task actions (used by cards and drawer) ----------
@@ -309,6 +309,29 @@ ACT.fakeKra = el => {
       await api("markKRAFake", { id, reason });
       if (k) { k[5] = "Rejected"; k[7] = (k[7] ? k[7] + " | " : "") + "Admin Penalty: Marked Fake (" + reason + ")"; S.idx = buildIndex(S.data); }
       afterAction("Penalty applied.");
+    }
+  });
+};
+
+// Reject submitted work (−1, counts as fake) or cancel a task (no score impact)
+ACT.rejectTask = el => {
+  const t = S.idx.taskById.get(el.dataset.id);
+  const cancelOnly = el.dataset.mode === "cancel" || t[6] !== "Submitted";
+  dialog({
+    title: '<i class="fas fa-ban text-danger me-2"></i>' + (cancelOnly ? "Cancel task" : "Reject submitted work"), submit: cancelOnly ? "Cancel task" : "Confirm", submitClass: "btn-danger",
+    body: taskLine(t) + (cancelOnly ? "" : `<label class="form-label">What do you want to do?</label>
+      <div class="d-grid gap-2 mb-3">
+        <label class="opt-card"><input type="radio" name="mode" value="Rejected" checked><span><b>Reject</b> — work is not acceptable. Task closes as <b>Rejected</b> and counts <b class="text-danger">−1</b> in the score.</span></label>
+        <label class="opt-card"><input type="radio" name="mode" value="Cancelled"><span><b>Cancel task</b> — task is no longer needed. Closes with <b>no score impact</b>.</span></label>
+        <div class="small text-muted">To send it back for rework with a new date, use <b>Reopen</b> instead.</div>
+      </div>`) +
+      `<label class="form-label">Reason *</label><textarea class="form-control" name="remarks" rows="3" required></textarea>`,
+    onSubmit: async f => {
+      const action = cancelOnly ? "Cancelled" : (f.querySelector('input[name="mode"]:checked') || {}).value || "Rejected";
+      const remarks = formVal(f, "remarks"); need(remarks, "Write a reason.");
+      await api("taskAction", { id: t[0], action, remarks, newDate: "" });
+      patchTask(t[0], { 6: action, 8: appendRemark(t, "Admin (" + action + "): " + remarks) }, { type: action === "Rejected" ? "rejected" : "cancelled", message: remarks, meta: { remark: 1 } });
+      afterAction(action === "Rejected" ? "Task rejected." : "Task cancelled.");
     }
   });
 };
