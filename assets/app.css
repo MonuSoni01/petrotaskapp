@@ -619,3 +619,6 @@ button.stat { font: inherit; }
 .dh-name { font-weight: 800; font-size: 1.02rem; line-height: 1.2; }
 .dh-route { color: var(--muted); margin-top: 2px; }
 .dh-pair { display: inline-flex; } .dh-pair .avatar + .avatar { margin-left: -8px; border: 2px solid var(--surface); }
+.task-brief.ticket { border-left-color: var(--orange); }
+.task-brief.ticket .tb-label { color: var(--orange); }
+.task-brief.ticket.collapsed .tb-text { -webkit-line-clamp: 6; }

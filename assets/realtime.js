@@ -43,7 +43,7 @@ function paintChat(taskId, scroll) {
   if (drawerTaskId !== String(taskId)) return;
   const b = $("#drawerBody"); if (!b) return;
   const near = b.scrollHeight - b.scrollTop - b.clientHeight < 140;
-  b.innerHTML = chatHtml(S.idx.taskById.get(String(taskId)));
+  b.innerHTML = chatHtml(itemRow(taskId));
   if (scroll || near) b.scrollTop = b.scrollHeight;
 }
 
@@ -82,7 +82,7 @@ async function pollOnce() {
     if (fresh.length || changedStatus) {
       const affected = new Set(fresh.map(x => String(x[1])).concat((r.tasks || []).map(t => String(t[0]))));
       if (drawerTaskId && affected.has(drawerTaskId)) {
-        const tstat = (r.tasks || []).find(t => String(t[0]) === drawerTaskId);
+        const tstat = (r.tasks || []).concat(r.tickets || []).find(t => String(t[0]) === drawerTaskId);
         if (tstat) { const b = $("#drawerBody"); const near = b && b.scrollHeight - b.scrollTop - b.clientHeight < 140; const typing = $("#chatText")?.value || ""; renderDrawer(near); if (typing && $("#chatText")) $("#chatText").value = typing; }
         else paintChat(drawerTaskId);
       }
@@ -106,8 +106,8 @@ function relevantRow(a) {
   const id = String(a[1]), type = String(a[4]);
   if (isTicketId(id)) {
     const t = S.data.tickets.find(x => String(x[0]) === id); if (!t) return false;
-    if (ek(t[3]) === me()) return type === "ticket_created" || type === "ticket_reopened";
-    if (ek(t[1]) === me()) return type === "ticket_resolved";
+    if (ek(t[3]) === me()) return type === "ticket_created" || type === "ticket_reopened" || type === "comment";
+    if (ek(t[1]) === me()) return type === "ticket_resolved" || type === "comment";
     return false;
   }
   const t = S.idx.taskById.get(id); if (!t) return false;
@@ -163,8 +163,7 @@ ACT.enableAlerts = async () => { try { await Notification.requestPermission(); }
 ACT.notifOpen = el => {
   $("#bellPanel").classList.remove("open");
   const id = el.dataset.id;
-  if (isTicketId(id)) { const t = S.data.tickets.find(x => String(x[0]) === id); location.hash = "#/tickets?tab=" + (t && ek(t[3]) === me() ? "resolve" : "raised"); }
-  else openTask(id);
+  if (isTicketId(id)) openTicket(id); else openTask(id);
 };
 document.addEventListener("click", e => { const p = $("#bellPanel"); if (p && p.classList.contains("open") && !e.target.closest("#bellPanel, [data-act=bell]")) p.classList.remove("open"); });
 

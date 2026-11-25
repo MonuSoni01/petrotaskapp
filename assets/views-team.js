@@ -189,7 +189,7 @@ VIEWS.tracker = {
     const typeIcon = { Delegation: "list-check", KRA: "bullseye", "Help Ticket": "headset" };
     const cards = visible.slice(u.page * size, u.page * size + size).map(it => {
       const overdue = !it.done && !isAwaiting(it.status) && d10(it.date) && d10(it.date) < S.data.today;
-      return `<div class="wcard ${it.done ? "a-green" : isAwaiting(it.status) ? "a-violet" : overdue ? "a-red" : "a-amber"} ${it.type === "Delegation" ? "click" : ""}" ${it.type === "Delegation" ? `data-act="openTask" data-id="${h(it.id)}"` : ""}>
+      return `<div class="wcard ${it.done ? "a-green" : isAwaiting(it.status) ? "a-violet" : overdue ? "a-red" : "a-amber"} ${it.type !== "KRA" ? "click" : ""}" ${it.type === "Delegation" ? `data-act="openTask" data-id="${h(it.id)}"` : it.type === "Help Ticket" ? `data-act="openTicket" data-id="${h(it.id)}"` : ""}>
         <div class="wcard-top"><span class="chip chip-outline"><i class="fas fa-${typeIcon[it.type]}"></i>${it.type}</span>${statusChip(it.status)}${freqChip(it.freq)}</div>
         <div class="wcard-title">${h(it.title)}</div>
         <div class="wcard-meta">${it.person ? `<span><i class="fas fa-user"></i>${it.label} ${h(nameOf(it.person))}</span>` : ""}<span>${it.done ? `<i class="fas fa-check-double"></i>Completed ${fmtD(it.closed)}` : `<i class="far fa-calendar"></i>${it.type === "KRA" ? "Date" : "Due"} ${fmtD(it.date)}`}</span>${overdue ? '<span class="due red">Overdue</span>' : ""}</div>

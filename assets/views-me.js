@@ -196,9 +196,9 @@ function kraSubmitDialog(ids) {
 // ================= TICKETS =================
 function ticketCard(t, mode) {
   const st = t[6], open = workIsOpen(st);
-  const hist = String(t[8] || "").split(" | ").map(s => s.trim()).filter(Boolean);
+  const last = lastTicketPreview(t);
   const file1 = t[9], file2 = t[7];
-  return `<div class="wcard ${open ? (d10(t[11]) && d10(t[11]) < S.data.today ? "a-red" : "a-amber") : "a-green"}">
+  return `<div class="wcard click ${open ? (d10(t[11]) && d10(t[11]) < S.data.today ? "a-red" : "a-amber") : "a-green"}" data-act="openTicket" data-id="${h(t[0])}">
     <div class="wcard-top">${statusChip(st)}<span class="chip chip-outline">${h(t[2])}</span>${open ? dueInfo(t[11], true).replace("No deadline", "No deadline set") : ""}</div>
     <div class="wcard-title">${h(t[4])}</div>
     <div class="wcard-meta">
@@ -206,10 +206,11 @@ function ticketCard(t, mode) {
       <span><i class="far fa-calendar-plus"></i>${fmtD(t[5])}</span>
       ${t[10] ? `<span><i class="fas fa-check-double"></i>Resolved ${fmtD(t[10])}</span>` : ""}
     </div>
-    ${hist.length ? `<ul class="hist-list">${hist.map(x => `<li>${linkify(x)}</li>`).join("")}</ul>` : ""}
+    ${last ? `<div class="wcard-last"><i class="far fa-comment-dots mt-1"></i><span>${h(last)}</span></div>` : ""}
     ${file1 || file2 ? `<div class="mt-2 d-flex gap-2 flex-wrap">${file1 ? `<a class="att" href="${safeUrl(file1)}" target="_blank" rel="noopener"><i class="fas fa-image"></i>Ticket file</a>` : ""}${file2 ? `<a class="att" href="${safeUrl(file2)}" target="_blank" rel="noopener"><i class="fas fa-paperclip"></i>Resolution file</a>` : ""}</div>` : ""}
-    ${mode === "resolve" && open ? `<div class="wcard-actions"><button class="btn btn-success btn-sm" data-act="resolveTicket" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Resolve</button></div>` : ""}
-    ${mode === "raised" && st === "Closed" ? `<div class="wcard-actions"><button class="btn btn-danger-soft btn-sm" data-act="reopenTicket" data-id="${h(t[0])}"><i class="fas fa-rotate-left me-1"></i>Reopen</button></div>` : ""}
+    <div class="wcard-actions"><button class="btn btn-ghost btn-sm me-auto" data-act="openTicket" data-id="${h(t[0])}"><i class="far fa-comments me-1"></i>Open & chat</button>
+    ${mode === "resolve" && open ? `<button class="btn btn-success btn-sm" data-act="resolveTicket" data-id="${h(t[0])}"><i class="fas fa-check me-1"></i>Resolve</button>` : ""}
+    ${mode === "raised" && st === "Closed" ? `<button class="btn btn-danger-soft btn-sm" data-act="reopenTicket" data-id="${h(t[0])}"><i class="fas fa-rotate-left me-1"></i>Reopen</button>` : ""}</div>
   </div>`;
 }
 VIEWS.tickets = {

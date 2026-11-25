@@ -33,6 +33,7 @@ function buildIndex(data) {
     kraMonth: byKey(data.kraTasks, r => ek(r[2]) + "|" + monthKeyOf(r[4])),
     kraMaster: new Map((data.kraMaster || []).map(r => [r[0], r])),
     ticketIn: byKey(data.tickets, r => ek(r[3])),
+    ticketById: new Map(data.tickets.map(r => [String(r[0]), r])),
     ticketOut: byKey(data.tickets, r => ek(r[1])),
     activity: byKey(data.activity, r => String(r[1])),
     holidays: new Set(data.holidays || [])
@@ -423,3 +424,34 @@ function suggestionText(sc) {
   document.addEventListener("click", e => { const el = e.target.closest("[data-tip]"); if (el && "ontouchstart" in window) { owner === el ? hide() : show(el); } else if (!el) hide(); }, true);
   window.addEventListener("scroll", hide, true);
 })();
+
+// ---------- help ticket history (same chat view as tasks) ----------
+// Ticket: 0 id,1 raisedBy,2 dept,3 assignedTo,4 desc,5 created,6 status,7 file,8 response,9 createFile,10 resolved,11 deadline
+function isTicketRow(r) { return Boolean(r) && /^TCK-/i.test(String(r[0])); }
+function itemRow(id) { id = String(id); return /^TCK-/i.test(id) ? S.idx.ticketById.get(id) : S.idx.taskById.get(id); }
+function ticketEvents(t) {
+  const acts = (S.idx.activity.get(String(t[0])) || []).slice().sort((a, b) => String(a[2]).localeCompare(String(b[2])));
+  const actText = type => new Set(acts.filter(a => a[4] === type).map(a => String(a[5]).trim()));
+  const resolvedTxt = actText("ticket_resolved"), reopenTxt = actText("ticket_reopened");
+  const legacy = [];
+  String(t[8] || "").split(" | ").map(x => x.trim()).filter(Boolean).forEach(seg => {
+    let m;
+    if ((m = seg.match(/^Resolved:\s*([\s\S]*)$/i))) { if (!resolvedTxt.has(m[1].trim())) legacy.push({ type: "ticket_resolved", actor: t[3], message: m[1], ts: "", legacy: true }); }
+    else if ((m = seg.match(/^Reopened Reason:\s*([\s\S]*)$/i))) { if (!reopenTxt.has(m[1].trim())) legacy.push({ type: "ticket_reopened", actor: t[1], message: m[1], ts: "", legacy: true }); }
+    else if (/^Leave cover:/i.test(seg)) legacy.push({ type: "reassigned", actor: "", message: seg, ts: "", legacy: true });
+    else legacy.push({ type: "note", actor: "", message: seg, ts: "", legacy: true });
+  });
+  for (let i = legacy.length - 1; i >= 0; i--) if (legacy[i].type === "ticket_resolved") { legacy[i].ts = t[10] || ""; if (t[7]) legacy[i].attachment = t[7]; break; }
+  const ev = [];
+  if (!acts.some(a => a[4] === "ticket_created")) ev.push({ type: "ticket_created", actor: t[1], ts: t[5], message: "", attachment: t[9], meta: { due: d10(t[11]) } });
+  ev.push(...legacy);
+  const hasResolved = legacy.some(e => e.type === "ticket_resolved") || acts.some(a => a[4] === "ticket_resolved");
+  if (t[6] === "Closed" && !hasResolved && t[10]) ev.push({ type: "ticket_resolved", actor: t[3], ts: t[10], message: "", attachment: t[7] });
+  acts.forEach(a => ev.push({ type: a[4], actor: a[3], ts: a[2], message: a[4] === "ticket_created" ? "" : a[5], meta: actMeta(a), attachment: a[7], id: a[0] }));
+  return ev;
+}
+function lastTicketPreview(t) {
+  const ev = ticketEvents(t).filter(e => e.type !== "ticket_created"); const e = ev[ev.length - 1];
+  if (!e) return "";
+  return (e.actor ? nameOf(e.actor).split(" ")[0] + ": " : "") + (e.message || (EVENT_LABEL[e.type] || {}).text || "");
+}

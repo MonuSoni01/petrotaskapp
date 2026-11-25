@@ -9,16 +9,17 @@ async function refreshThread(id, force) {
   try {
     const r = await api("taskActivity", { id }, { timeout: 30000 });
     const key = String(id);
-    const before = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (S.idx.taskById.get(key) || [])[6];
+    const before = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (itemRow(key) || [])[6];
     S.data.activity = S.data.activity.filter(a => String(a[1]) !== key).concat(r.activity || []);
     if (r.task) { const i = S.data.tasks.findIndex(t => String(t[0]) === key); if (i >= 0) S.data.tasks[i] = r.task; }
+    if (r.ticket) { const i = S.data.tickets.findIndex(t => String(t[0]) === key); if (i >= 0) S.data.tickets[i] = r.ticket; }
     S.idx = buildIndex(S.data);
-    const after = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (S.idx.taskById.get(key) || [])[6];
+    const after = (S.idx.activity.get(key) || []).map(a => a[0]).join(",") + "|" + (itemRow(key) || [])[6];
     if (before !== after) {
       if (drawerTaskId === key) {
         const b = $("#drawerBody"), nearBottom = b.scrollHeight - b.scrollTop - b.clientHeight < 120;
         if (before.split("|")[1] === after.split("|")[1]) { // only new messages: keep the composer as it is
-          b.innerHTML = chatHtml(S.idx.taskById.get(key));
+          b.innerHTML = chatHtml(itemRow(key));
           if (nearBottom) b.scrollTop = b.scrollHeight;
         } else {
           const typing = $("#chatText") ? $("#chatText").value : "";
@@ -42,10 +43,21 @@ function openTask(id) {
   refreshThread(drawerTaskId); // pull the latest messages in the background
 }
 ACT.openTask = el => openTask(el.dataset.id);
+function openTicket(id) {
+  const t = S.idx.ticketById.get(String(id));
+  if (!t) return toast("Ticket not found. Refresh the data.", "warn");
+  drawerTaskId = String(id);
+  drawer = drawer || new bootstrap.Offcanvas($("#taskDrawer"));
+  renderDrawer(true);
+  drawer.show();
+  refreshThread(drawerTaskId);
+}
+ACT.openTicket = el => { if ($("#dlg").classList.contains("show")) closeDialog(); openTicket(el.dataset.id); };
 $("#taskDrawer").addEventListener("hidden.bs.offcanvas", () => { drawerTaskId = ""; });
 
 function renderDrawer(scroll) {
   if (!drawerTaskId) return;
+  if (/^TCK-/i.test(drawerTaskId)) return renderTicketDrawer(scroll);
   const t = S.idx.taskById.get(drawerTaskId);
   if (!t) return;
   const open = workIsOpen(t[6]);
@@ -80,7 +92,8 @@ function renderDrawer(scroll) {
 ACT.briefToggle = el => { const b = $("#taskBrief"); b.classList.toggle("collapsed"); el.textContent = b.classList.contains("collapsed") ? "Show full task" : "Show less"; };
 
 function chatHtml(t) {
-  const events = taskEvents(t);
+  if (!t) return "";
+  const events = isTicketRow(t) ? ticketEvents(t) : taskEvents(t);
   let lastDay = null, prevActor = null, html = "";
   events.forEach(e => {
     // Old entries without a time stay under the previous date (they happened after it).
@@ -110,6 +123,8 @@ function eventHtml(e, t, prevActor) {
   const pill = (cls, text, extra = "") => ({ bubble: false, html: `<div class="ev-pill ${cls}"><i class="fas ${L.icon}"></i><span>${text}${time ? `<span class="t">· ${time}</span>` : ""}</span>${extra}</div>` });
   // System events are compact centred pills.
   if (e.type === "reassigned") return pill("", h(e.message || "Task reassigned"));
+  if (e.type === "ticket_created") return pill("brand", `<b>${who}</b> raised this ticket${meta.due ? ` · deadline <b>${fmtD(meta.due)}</b>` : ""}`, e.attachment ? attHtml(e.attachment) : "");
+  if (e.type === "ticket_resolved" && !e.message && !e.attachment) return pill("green", `<b>${who}</b> resolved the ticket`);
   if (e.type === "created") return pill("brand", `<b>${who}</b> assigned this task${meta.due ? ` · due <b>${fmtD(meta.due)}</b>` : ""}`, e.attachment ? attHtml(e.attachment) : "");
   if (!e.message && !e.attachment) {
     if (e.type === "approved") return pill("green", `<b>${who}</b> approved the task`);
@@ -335,3 +350,49 @@ ACT.rejectTask = el => {
     }
   });
 };
+
+// ---------- Help ticket panel: full description + chat + Resolve / Reopen ----------
+function renderTicketDrawer(scroll) {
+  const t = S.idx.ticketById.get(drawerTaskId);
+  if (!t) return;
+  const open = workIsOpen(t[6]);
+  const iRaised = ek(t[1]) === me(), iResolve = ek(t[3]) === me();
+  const other = iRaised && !iResolve ? t[3] : iResolve && !iRaised ? t[1] : "";
+  const who = other
+    ? `<div class="dh-name">${h(nameOf(other))}</div><div class="dh-route small">${iRaised ? `<i class="fas fa-headset me-1"></i>Your help ticket to ${h(nameOf(other).split(" ")[0])} · ${h(t[2])}` : `<i class="fas fa-inbox me-1"></i>${h(nameOf(other).split(" ")[0])} needs your help · ${h(t[2])}`}</div>`
+    : `<div class="dh-name">${h(nameOf(t[1]))} <i class="fas fa-arrow-right-long mx-1 text-muted small"></i> ${h(nameOf(t[3]))}</div><div class="dh-route small"><i class="fas fa-eye me-1"></i>Team ticket · you are viewing</div>`;
+  $("#drawerHead").innerHTML = `<div class="dh-top">${other ? avatar(other, "lg") : `<span class="dh-pair">${avatar(t[1], "sm")}${avatar(t[3], "sm")}</span>`}
+      <div class="min-w-0 flex-grow-1">${who}<div class="d-flex flex-wrap gap-1 mt-1"><span class="chip chip-orange"><i class="fas fa-headset"></i>Help ticket</span>${statusChip(t[6])}</div></div></div>`;
+  const long = String(t[4] || "").length > 220;
+  $("#drawerMeta").innerHTML = `
+    <div class="task-brief ticket ${long ? "collapsed" : ""}" id="taskBrief">
+      <div class="tb-label"><i class="fas fa-ticket me-1"></i>Issue</div>
+      <div class="tb-text" id="drawerTitle">${linkify(t[4])}</div>
+      ${long ? `<button type="button" class="tb-more" data-act="briefToggle">Show full issue</button>` : ""}
+      ${t[9] ? `<a class="att mt-2" href="${safeUrl(t[9])}" target="_blank" rel="noopener"><i class="fas fa-paperclip"></i>Ticket attachment</a>` : ""}
+    </div>
+    <div class="meta-strip">
+      <div><span class="k">Raised</span><span>${fmtD(t[5])}</span></div>
+      <div><span class="k">Deadline</span><span class="fw-bold">${t[11] ? fmtD(t[11]) : "Not set"}</span></div>
+      <div><span class="k">Status</span><span>${open ? (t[11] ? dueInfo(t[11], true) : statusChip(t[6])) : "Resolved " + fmtShort(t[10])}</span></div>
+    </div>`;
+  $("#drawerBody").innerHTML = chatHtml(t);
+  const btns = [];
+  if (iResolve && open) btns.push(`<button class="btn btn-success btn-sm" data-act="resolveTicket" data-id="${h(t[0])}"><i class="fas fa-circle-check me-1"></i>Resolve & close</button>`);
+  if (iRaised && t[6] === "Closed") btns.push(`<button class="btn btn-danger-soft btn-sm" data-act="reopenTicket" data-id="${h(t[0])}"><i class="fas fa-rotate-left me-1"></i>Not solved — reopen</button>`);
+  if (!iRaised && !iResolve && open) btns.push(`<div class="view-only w-100"><i class="fas fa-eye me-1"></i>View only — ${h(nameOf(t[3]))} resolves this ticket</div>`);
+  $("#drawerFoot").innerHTML = (btns.length ? `<div class="drawer-actions">${btns.join("")}</div>` : "") + composerHtml(t[0]);
+  if (scroll) requestAnimationFrame(() => { const b = $("#drawerBody"); b.scrollTop = b.scrollHeight; });
+}
+function composerHtml(id) {
+  return `<div id="chatPreview" class="chat-preview d-none"></div>
+    <form class="composer" id="composer" data-id="${h(id)}">
+      <div class="composer-box">
+        <button type="button" class="cbtn" title="Attach file" data-act="chatBrowse"><i class="fas fa-paperclip"></i></button>
+        <button type="button" class="cbtn" title="Paste screenshot (or press Ctrl+V)" data-act="chatPaste"><i class="fas fa-camera"></i></button>
+        <input type="file" id="chatFile" class="d-none" data-change="chatFile">
+        <textarea id="chatText" rows="1" placeholder="Message… (Ctrl+V to paste a screenshot)" data-input="autogrow"></textarea>
+      </div>
+      <button class="send-btn" type="submit" title="Send"><i class="fas fa-paper-plane"></i></button>
+    </form>`;
+}
